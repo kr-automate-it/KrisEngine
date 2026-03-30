@@ -1,0 +1,71 @@
+#pragma once
+#include "bitboard.h"
+#include "zobrist.h"
+#include <string>
+
+struct StateInfo {
+    CastlingRight castling;
+    Square        epSquare;
+    int           halfmoveClock;
+    int           fullmoveNumber;
+    Piece         captured;
+    U64           hash;
+    U64           pawnHash;
+    StateInfo*    previous;
+};
+
+class Position {
+public:
+    void set(const std::string& fen);
+    std::string fen() const;
+
+    Piece piece_on(Square s) const { return board[s]; }
+    U64 pieces() const { return byColor[WHITE] | byColor[BLACK]; }
+    U64 pieces(Color c) const { return byColor[c]; }
+    U64 pieces(PieceType pt) const { return byType[pt]; }
+    U64 pieces(Color c, PieceType pt) const { return byColor[c] & byType[pt]; }
+    U64 pieces(PieceType pt1, PieceType pt2) const { return byType[pt1] | byType[pt2]; }
+    U64 pieces(Color c, PieceType pt1, PieceType pt2) const { return byColor[c] & (byType[pt1] | byType[pt2]); }
+    Square king_square(Color c) const { return lsb(pieces(c, KING)); }
+
+    Color side_to_move() const { return sideToMove; }
+    CastlingRight castling_rights() const { return st->castling; }
+    Square ep_square() const { return st->epSquare; }
+    int halfmove_clock() const { return st->halfmoveClock; }
+    U64 key() const { return st->hash; }
+    U64 pawn_key() const { return st->pawnHash; }
+
+    void do_move(Move m, StateInfo& newSt);
+    void undo_move(Move m);
+
+    // Null move — oddanie ruchu przeciwnikowi (do null move pruning)
+    void do_null_move(StateInfo& newSt);
+    void undo_null_move();
+
+    // Detekcja remisu przez powtorzenie lub regule 50 ruchow
+    bool is_draw() const;
+
+    U64 attackers_to(Square s, U64 occupied) const;
+    U64 attackers_to(Square s) const { return attackers_to(s, pieces()); }
+    bool in_check() const;
+    bool is_legal(Move m) const;
+
+    // SEE: wynik wymiany na polu docelowym (>0 = korzystna, <0 = niekorzystna)
+    int see(Move m) const;
+
+    Move parse_uci(const std::string& str) const;
+    std::string move_to_uci(Move m) const;
+
+private:
+    Piece board[SQUARE_NB];
+    U64   byColor[COLOR_NB];
+    U64   byType[PIECE_TYPE_NB];
+    Color sideToMove;
+
+    StateInfo  rootState;
+    StateInfo* st;
+
+    void put_piece(Piece p, Square s);
+    void remove_piece(Square s);
+    void move_piece(Square from, Square to);
+};
