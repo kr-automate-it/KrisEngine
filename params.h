@@ -7,45 +7,45 @@
 
 struct Params {
     // --- Eval: mobilnosc (centypionki za pole) ---
-    // Texel tuned (TCEC S28 League 2, 20K pozycji, MSE 0.0666)
-    int knightMobMG = 4;
-    int knightMobEG = 1;
+    // Texel tuned (TCEC S28 League 2, 20K pozycji)
+    int knightMobMG = 5;
+    int knightMobEG = 0;
     int bishopMobMG = 8;
-    int bishopMobEG = 3;
+    int bishopMobEG = 2;
     int rookMobMG   = 3;
-    int rookMobEG   = 9;
+    int rookMobEG   = 10;
     int queenMobMG  = 5;
     int queenMobEG  = 5;
 
     // --- Eval: passed pawns (skalowanie %, 100 = obecne wartosci) ---
-    int passedPawnScale = 80;
+    int passedPawnScale = 75;
 
     // --- Eval: king attack ---
     int kingAttackWeight = 8;
 
     // --- Eval: bishop pair ---
-    int bishopPairMG = 50;
-    int bishopPairEG = 70;
+    int bishopPairMG = 55;
+    int bishopPairEG = 75;
 
     // --- Eval: isolated/doubled pawns ---
     int isolatedPawnMG = 8;
     int isolatedPawnEG = 17;
     int doubledPawnMG  = 11;
-    int doubledPawnEG  = 10;
+    int doubledPawnEG  = 12;
 
     // --- Eval: knight outpost ---
-    int knightOutpostMG = 20;
-    int knightOutpostEG = 25;
+    int knightOutpostMG = 15;
+    int knightOutpostEG = 15;
 
     // --- Eval: rook ---
-    int rookOpenFileMG  = 32;
+    int rookOpenFileMG  = 35;
     int rookOpenFileEG  = 21;
     int rook7thRankMG   = 20;
-    int rook7thRankEG   = 30;
+    int rook7thRankEG   = 25;
 
     // --- Eval: tempo ---
-    int tempoMG = 21;
-    int tempoEG = 11;
+    int tempoMG = 23;
+    int tempoEG = 15;
 
     // --- Search (SPSA-confirmed, nie zmieniaj przez Texel depth-1) ---
     int aspirationWindow   = 25;
