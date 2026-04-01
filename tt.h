@@ -11,12 +11,13 @@ enum TTFlag : uint8_t {
 
 // Jeden wpis w tablicy — 16 bajtow, kompaktowy
 struct TTEntry {
-    U64      key;     // Pelny hash do weryfikacji (kolizje!)
-    int16_t  score;   // Wynik ewaluacji
-    int16_t  depth;   // Glebokosc przeszukiwania
-    Move     move;    // Najlepszy ruch znaleziony
-    TTFlag   flag;    // Typ wpisu
-    uint8_t  age;     // Generacja (do wymiany starych wpisow)
+    U64      key;       // Pelny hash do weryfikacji (kolizje!)
+    int16_t  score;     // Wynik ewaluacji
+    int16_t  depth;     // Glebokosc przeszukiwania
+    int16_t  staticEval;// Statyczny eval (cache — unika powtornego evaluate())
+    Move     move;      // Najlepszy ruch znaleziony
+    TTFlag   flag;      // Typ wpisu
+    uint8_t  age;       // Generacja (do wymiany starych wpisow)
 };
 
 class TranspositionTable {
@@ -31,7 +32,7 @@ public:
     TTEntry* probe(U64 key, bool& found);
 
     // Zapisz wpis
-    void store(U64 key, int score, int depth, Move move, TTFlag flag);
+    void store(U64 key, int score, int depth, Move move, TTFlag flag, int staticEval = 0);
 
     // Nowa gra — zwieksz generacje (stare wpisy beda nadpisywane pierwsze)
     void new_generation() { generation++; }

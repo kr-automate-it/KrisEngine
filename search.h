@@ -7,7 +7,7 @@
 struct SearchInfo {
     int depth;
     int maxDepth;
-    int64_t nodes;
+    std::atomic<int64_t> nodes; // atomic — bezpieczne dla SMP
     std::chrono::steady_clock::time_point startTime;
     int64_t timeLimit; // ms, 0 = brak limitu
     std::atomic<bool> stopped;
@@ -17,7 +17,12 @@ struct SearchInfo {
 
 struct SearchResult {
     Move bestMove;
+    Move ponderMove; // przewidywany ruch przeciwnika (do pondering)
     int  score;
 };
 
 SearchResult search(Position& pos, SearchInfo& info);
+// Lazy SMP: uruchamia numThreads watkow, kazdy szuka na kopii pozycji,
+// wspoldzielac TT. Watek glowny zwraca wynik.
+SearchResult search_smp(Position& pos, SearchInfo& info, int numThreads);
+void clear_search_tables();

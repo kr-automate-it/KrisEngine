@@ -522,17 +522,17 @@ bool Position::is_draw() const {
     // Pozycja moze sie powtorzyc tylko co 2 polruchy (ta sama strona)
     // i tylko w obrebie halfmoveClock (od ostatniego bicia/ruchu pionka)
     int count = 0;
-    StateInfo* s = st->previous;
+    StateInfo* s = st;
     int limit = st->halfmoveClock;
-    for (int i = 2; i <= limit && s && s->previous; i += 2) {
+    for (int i = 2; i <= limit; i += 2) {
         s = s->previous;
         if (!s) break;
         s = s->previous;
         if (!s) break;
         if (s->hash == st->hash) {
             count++;
-            if (count >= 2)
-                return true; // 3-krotne powtorzenie (obecna + 2 wczesniejsze)
+            if (count >= 1)
+                return true; // 2-fold w search wystarczy (unika petli)
         }
     }
     return false;

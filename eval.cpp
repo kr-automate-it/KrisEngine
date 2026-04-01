@@ -1,5 +1,6 @@
 #include "eval.h"
 #include "pawns.h"
+#include "params.h"
 
 // === Tapered Eval ===
 // Dwa zestawy tablic: midgame (MG) i endgame (EG).
@@ -181,6 +182,18 @@ int evaluate(const Position& pos) {
     int mg = 0, eg = 0;
     int phase = 0;
 
+    // #8: Cache king squares i piece counts na poczatku
+    Square kingWh = pos.king_square(WHITE);
+    Square kingBl = pos.king_square(BLACK);
+    int numBishops[COLOR_NB] = {
+        popcount(pos.pieces(WHITE, BISHOP)),
+        popcount(pos.pieces(BLACK, BISHOP))
+    };
+    int numKnights[COLOR_NB] = {
+        popcount(pos.pieces(WHITE, KNIGHT)),
+        popcount(pos.pieces(BLACK, KNIGHT))
+    };
+
     for (int sq = 0; sq < 64; sq++) {
         Piece p = pos.piece_on(Square(sq));
         if (p == NO_PIECE) continue;
@@ -195,7 +208,6 @@ int evaluate(const Position& pos) {
         if (c == WHITE) { mg += mgVal; eg += egVal; }
         else            { mg -= mgVal; eg -= egVal; }
 
-        // Oblicz faze
         switch (pt) {
             case KNIGHT: phase += KnightPhase; break;
             case BISHOP: phase += BishopPhase; break;
@@ -205,18 +217,23 @@ int evaluate(const Position& pos) {
         }
     }
 
-    // Bonus za pare goncow
-    if (popcount(pos.pieces(WHITE, BISHOP)) >= 2) { mg += 30; eg += 50; }
-    if (popcount(pos.pieces(BLACK, BISHOP)) >= 2) { mg -= 30; eg -= 50; }
+    // #7: Bishop pair — uzyj cached counts
+    if (numBishops[WHITE] >= 2) { mg += params.bishopPairMG; eg += params.bishopPairEG; }
+    if (numBishops[BLACK] >= 2) { mg -= params.bishopPairMG; eg -= params.bishopPairEG; }
 
     U64 occ = pos.pieces();
 
     // === Struktura pionkow (z pawn hash cache) ===
+    // Passed pawns bitboard — uzywany ponizej w bonusach zaleznych od figur
+    U64 passedBB[COLOR_NB] = {0, 0};
+
     bool pawnHit;
     PawnEntry* pe = pawnTable.probe(pos.pawn_key(), pawnHit);
     if (pawnHit) {
         mg += pe->mg;
         eg += pe->eg;
+        passedBB[WHITE] = pe->passedPawns[WHITE];
+        passedBB[BLACK] = pe->passedPawns[BLACK];
     } else {
     int pawnMG = 0, pawnEG = 0;
     for (Color c : {WHITE, BLACK}) {
@@ -229,132 +246,360 @@ int evaluate(const Position& pos) {
         while (pawns) {
             Square s = pop_lsb(pawns);
             int f = file_of(s);
-            int r = (c == WHITE) ? rank_of(s) : 7 - rank_of(s); // rank z perspektywy koloru
+            int r = (c == WHITE) ? rank_of(s) : 7 - rank_of(s);
 
-            // Maska: kolumny sasiednie i wlasna, od nastepnego rzedu do konca
-            // Pionek wolny (passed) = brak pionkow przeciwnika mogacych go zablokowac
             U64 fileMask = FileA_BB << f;
             U64 adjFiles = (f > 0 ? FileA_BB << (f-1) : 0) | (f < 7 ? FileA_BB << (f+1) : 0);
             U64 frontMask;
             if (c == WHITE) {
-                // Wszystkie pola od rzedu r+1 do 7
-                frontMask = ~0ULL;
-                if (r < 7) frontMask = ~((1ULL << ((r + 1) * 8)) - 1);
-                else frontMask = 0;
+                frontMask = (r < 7) ? ~((1ULL << ((r + 1) * 8)) - 1) : 0;
             } else {
-                // Wszystkie pola od rzedu 0 do r-1 (z perspektywy bialych: 7-r)
                 int realRank = rank_of(s);
-                if (realRank > 0) frontMask = (1ULL << (realRank * 8)) - 1;
-                else frontMask = 0;
+                frontMask = (realRank > 0) ? (1ULL << (realRank * 8)) - 1 : 0;
             }
 
             bool passed = !(theirPawns & (fileMask | adjFiles) & frontMask);
             if (passed) {
-                static const int passedBonusMG[] = {0, 5, 10, 15, 30, 50, 80, 0};
-                static const int passedBonusEG[] = {0, 10, 20, 35, 60, 100, 150, 0};
-                pawnMG += sign * passedBonusMG[r];
-                pawnEG += sign * passedBonusEG[r];
+                passedBB[c] |= square_bb(s); // zapisz do bitboard
+                static const int passedBonusMG[] = {0, 5, 10, 20, 35, 60, 90, 0};
+                static const int passedBonusEG[] = {0, 10, 20, 40, 80, 130, 200, 0};
+                pawnMG += sign * passedBonusMG[r] * params.passedPawnScale / 100;
+                pawnEG += sign * passedBonusEG[r] * params.passedPawnScale / 100;
             }
 
             bool isolated = !(ourPawns & adjFiles);
             if (isolated) {
-                pawnMG -= sign * 10;
-                pawnEG -= sign * 15;
+                pawnMG -= sign * params.isolatedPawnMG;
+                pawnEG -= sign * params.isolatedPawnEG;
             }
 
             if (popcount(ourPawns & fileMask) > 1) {
-                pawnMG -= sign * 5;
-                pawnEG -= sign * 10;
+                pawnMG -= sign * params.doubledPawnMG;
+                pawnEG -= sign * params.doubledPawnEG;
+            }
+
+            // Backward pawn
+            if (!isolated && r >= 2 && r <= 5) {
+                U64 behindMask;
+                if (c == WHITE) behindMask = (1ULL << ((r + 1) * 8)) - 1;
+                else { int realRank = rank_of(s); behindMask = ~((1ULL << (realRank * 8)) - 1); }
+                if (!(ourPawns & adjFiles & behindMask)) {
+                    Square stopSq = (c == WHITE) ? Square(s + 8) : Square(s - 8);
+                    if (stopSq >= SQ_A1 && stopSq <= SQ_H8) {
+                        U64 theirPawnAtt = (c == WHITE)
+                            ? ((theirPawns >> 9) & ~FileH_BB) | ((theirPawns >> 7) & ~FileA_BB)
+                            : ((theirPawns << 7) & ~FileH_BB) | ((theirPawns << 9) & ~FileA_BB);
+                        if (theirPawnAtt & square_bb(stopSq)) { pawnMG -= sign * 8; pawnEG -= sign * 12; }
+                    }
+                }
             }
         }
     }
-    pawnTable.store(pos.pawn_key(), pawnMG, pawnEG);
+    pawnTable.store(pos.pawn_key(), pawnMG, pawnEG, passedBB[WHITE], passedBB[BLACK]);
     mg += pawnMG;
     eg += pawnEG;
     } // end else (pawn hash miss)
 
-    // === Bezpieczenstwo krola ===
-    // Tarcza pionkowa: sprawdz czy pionki stoja przed krolem
+    // === Passed pawn bonusy zalezne od figur (uzywa cached passedBB) ===
     for (Color c : {WHITE, BLACK}) {
         int sign = (c == WHITE) ? 1 : -1;
-        Square ksq = pos.king_square(c);
+        Color them = ~c;
+        Square ourKing   = (c == WHITE) ? kingWh : kingBl;
+        Square theirKing = (c == WHITE) ? kingBl : kingWh;
+
+        U64 passed = passedBB[c];
+        while (passed) {
+            Square s = pop_lsb(passed);
+            int f = file_of(s);
+            int r = (c == WHITE) ? rank_of(s) : 7 - rank_of(s);
+            if (r < 3) continue;
+
+            U64 fileMask = FileA_BB << f;
+            U64 frontMask;
+            if (c == WHITE) frontMask = (r < 7) ? ~((1ULL << ((r + 1) * 8)) - 1) : 0;
+            else { int rr = rank_of(s); frontMask = (rr > 0) ? (1ULL << (rr * 8)) - 1 : 0; }
+
+            U64 pathToPromo = fileMask & frontMask;
+            bool freePath = !(pos.pieces() & pathToPromo);
+
+            if (freePath) {
+                static const int freePathBonus[] = {0, 0, 0, 20, 40, 80, 160, 0};
+                eg += sign * freePathBonus[r];
+            }
+
+            // Blocked
+            Square stopSq = (c == WHITE) ? Square(s + 8) : Square(s - 8);
+            if (stopSq >= SQ_A1 && stopSq <= SQ_H8 && pos.piece_on(stopSq) != NO_PIECE) {
+                static const int blockedPenalty[] = {0, 0, 0, 5, 10, 20, 40, 0};
+                eg -= sign * blockedPenalty[r];
+            }
+
+            // Rook behind
+            U64 behindMask = fileMask & ~frontMask & ~square_bb(s);
+            if (pos.pieces(c, ROOK) & behindMask) { mg += sign * 10; eg += sign * 25; }
+            if (pos.pieces(them, ROOK) & behindMask) { mg -= sign * 10; eg -= sign * 25; }
+
+            // King proximity
+            Square promoSq = (c == WHITE) ? make_square(f, 7) : make_square(f, 0);
+            int ourDist  = std::max(std::abs(file_of(ourKing) - f), std::abs(rank_of(ourKing) - rank_of(promoSq)));
+            int theirDist = std::max(std::abs(file_of(theirKing) - f), std::abs(rank_of(theirKing) - rank_of(promoSq)));
+            eg += sign * (theirDist - ourDist) * 8;
+
+            // Rule of the square
+            if (freePath) {
+                int ranksToPromo = 7 - r;
+                int kingToPromo = std::max(std::abs(file_of(theirKing) - f),
+                                           std::abs(rank_of(theirKing) - rank_of(promoSq)));
+                int effectiveKingDist = (pos.side_to_move() == c) ? kingToPromo : kingToPromo - 1;
+                U64 theirHeavy = pos.pieces(them, ROOK) | pos.pieces(them, QUEEN);
+                if (effectiveKingDist > ranksToPromo && !theirHeavy)
+                    eg += sign * 300;
+            }
+        }
+    }
+
+    // Pawn-based attack units per color — wypelniane w king safety, uzywane w mobilnosci
+    int pawnAttackUnits[COLOR_NB] = {0, 0};
+
+    // === Bezpieczenstwo krola (attack units system) ===
+    // Tarcza pionkowa + otwarte linie + pawn storm
+    // Zebrane attack units przeliczane na kare z nieliniowej tablicy.
+
+    // Nieliniowa tablica kar: index = attack units (0..99), wartosc = kara w cp
+    // Wiecej atakujacych = eksponencjalnie gorsza pozycja krola
+    static const int SafetyTable[100] = {
+        0,  0,  1,  2,  3,  5,  7, 10, 13, 16,
+       20, 24, 29, 34, 39, 45, 51, 58, 65, 72,
+       80, 88, 97,106,115,125,135,146,157,168,
+      180,192,205,218,231,245,259,274,289,304,
+      320,336,353,370,387,405,423,442,461,480,
+      500,500,500,500,500,500,500,500,500,500,
+      500,500,500,500,500,500,500,500,500,500,
+      500,500,500,500,500,500,500,500,500,500,
+      500,500,500,500,500,500,500,500,500,500,
+      500,500,500,500,500,500,500,500,500,500,
+    };
+
+    for (Color c : {WHITE, BLACK}) {
+        int sign = (c == WHITE) ? 1 : -1;
+        Color them = ~c;
+        Square ksq = (c == WHITE) ? kingWh : kingBl;
         int kf = file_of(ksq);
         int kr = rank_of(ksq);
 
-        // Tylko w midgame, i gdy krol jest po roszadzie (na skrzydlach)
-        if (kf <= 2 || kf >= 5) {
-            int shieldBonus = 0;
-            int shieldRank = (c == WHITE) ? kr + 1 : kr - 1;
+        int attackUnits = 0;
 
-            if (shieldRank >= 0 && shieldRank < 8) {
-                for (int f = std::max(0, kf - 1); f <= std::min(7, kf + 1); f++) {
-                    Square pawnSq = make_square(f, shieldRank);
-                    if (pos.piece_on(pawnSq) == make_piece(c, PAWN))
-                        shieldBonus += 10;  // pionek na 1 rzad przed krolem
-                    else {
-                        // Sprawdz 2 rzedy przed
-                        int rank2 = (c == WHITE) ? kr + 2 : kr - 2;
-                        if (rank2 >= 0 && rank2 < 8) {
-                            Square pawnSq2 = make_square(f, rank2);
-                            if (pos.piece_on(pawnSq2) == make_piece(c, PAWN))
-                                shieldBonus += 5; // dalej = mniejszy bonus
-                        }
-                    }
+        // --- Tarcza pionkowa ---
+        // Sprawdzamy 3 kolumny wokol krola, 2 rzedu do przodu
+        for (int f = std::max(0, kf - 1); f <= std::min(7, kf + 1); f++) {
+            int shieldRank1 = (c == WHITE) ? kr + 1 : kr - 1;
+            int shieldRank2 = (c == WHITE) ? kr + 2 : kr - 2;
+            bool found = false;
+
+            if (shieldRank1 >= 0 && shieldRank1 < 8) {
+                Square sq1 = make_square(f, shieldRank1);
+                if (pos.piece_on(sq1) == make_piece(c, PAWN)) {
+                    // Pionek tuż przed królem — idealnie
+                    found = true;
                 }
             }
-            mg += sign * shieldBonus;
+            if (!found && shieldRank2 >= 0 && shieldRank2 < 8) {
+                Square sq2 = make_square(f, shieldRank2);
+                if (pos.piece_on(sq2) == make_piece(c, PAWN)) {
+                    attackUnits += 1; // pionek 2 rzedu dalej — slabsza tarcza
+                    found = true;
+                }
+            }
+            if (!found) {
+                // Brak pionka na kolumnie tarczy — luka
+                attackUnits += 3;
+            }
         }
 
-        // Kara za otwarte/pol-otwarte linie przy krolu — wieze i hetmany wroga moga wejsc
-        Color them = ~c;
+        // --- Otwarte/pol-otwarte linie przy krolu ---
         for (int f = std::max(0, kf - 1); f <= std::min(7, kf + 1); f++) {
             U64 fileBB = FileA_BB << f;
             bool ourPawnOnFile   = pos.pieces(c, PAWN) & fileBB;
             bool theirPawnOnFile = pos.pieces(them, PAWN) & fileBB;
 
             if (!ourPawnOnFile && !theirPawnOnFile) {
-                // Otwarta linia przy krolu
-                mg -= sign * 15;
+                attackUnits += 5; // otwarta linia = bardzo niebezpiecznie
             } else if (!ourPawnOnFile) {
-                // Pol-otwarta linia
-                mg -= sign * 8;
+                attackUnits += 3; // pol-otwarta na nas
             }
         }
+
+        // --- Pawn storm: wrogi pionek blisko naszego krola ---
+        U64 theirPawns = pos.pieces(them, PAWN);
+        for (int f = std::max(0, kf - 1); f <= std::min(7, kf + 1); f++) {
+            U64 fileBB = FileA_BB << f;
+            U64 stormPawns = theirPawns & fileBB;
+            while (stormPawns) {
+                Square sp = pop_lsb(stormPawns);
+                int stormRank = (c == WHITE) ? rank_of(sp) : 7 - rank_of(sp);
+                // Im blizej naszego krola, tym gorzej (rank z naszej perspektywy)
+                if (stormRank >= 4) attackUnits += stormRank - 3; // +1 za rank5, +2 za rank6, +3 za rank7
+            }
+        }
+
+        pawnAttackUnits[c] = attackUnits;
     }
 
-    // === Mobilnosc + Wieze otwarte ===
+    // === Mobilnosc + King Attack + Threat Detection ===
+    // Zbieramy ataki kazdego koloru w jednej petli.
+    // Po petli: threat detection na podstawie zebranych atakow.
+    U64 allAttacks[COLOR_NB] = {0, 0};
+    U64 pawnAtt[COLOR_NB] = {0, 0};
+    U64 minorAtt[COLOR_NB] = {0, 0};  // skoczki + gonce
+    U64 rookAtt[COLOR_NB] = {0, 0};
+
+    // Ataki pionkow (tanie — z tablicy)
+    for (Color c : {WHITE, BLACK}) {
+        U64 pawns = pos.pieces(c, PAWN);
+        if (c == WHITE)
+            pawnAtt[c] = ((pawns << 7) & ~FileH_BB) | ((pawns << 9) & ~FileA_BB);
+        else
+            pawnAtt[c] = ((pawns >> 9) & ~FileH_BB) | ((pawns >> 7) & ~FileA_BB);
+        allAttacks[c] |= pawnAtt[c];
+    }
+
+    // Attack weights per piece type (w attack units):
+    // Skoczek/goniec=2, wieza=3, hetman=5
+    static const int AttackWeight[PIECE_TYPE_NB] = {0, 0, 2, 2, 3, 5, 0};
+
     for (Color c : {WHITE, BLACK}) {
         int sign = (c == WHITE) ? 1 : -1;
-        int mob = 0;
+        Color them = ~c;
+        int mobMG = 0, mobEG = 0;
+        int attackerCount = 0;  // ile figur atakuje krolowska strefe
+        int attackUnits = pawnAttackUnits[them]; // zaczynamy od pawn-based units PRZECIWNIKA
+        Square theirKsq = (them == WHITE) ? kingWh : kingBl;
+        U64 kingZone = KingAttacks[theirKsq] | square_bb(theirKsq); // strefa krola + sam krol
+
+        // Safe mobility: nie licz pol atakowanych przez wrogi pionek
+        U64 safeMask = ~pos.pieces(c) & ~pawnAtt[them];
 
         U64 knights = pos.pieces(c, KNIGHT);
         while (knights) {
             Square s = pop_lsb(knights);
-            mob += popcount(KnightAttacks[s] & ~pos.pieces(c));
+            U64 att = KnightAttacks[s];
+            int cnt = popcount(att & safeMask);
+            mobMG += cnt * params.knightMobMG; mobEG += cnt * params.knightMobEG;
+            if (att & kingZone) {
+                attackerCount++;
+                attackUnits += AttackWeight[KNIGHT];
+                // Kontakt-szach: skoczek atakuje pole krola bezposrednio
+                if (att & square_bb(theirKsq))
+                    attackUnits += 1;
+            }
+            allAttacks[c] |= att;
+            minorAtt[c] |= att;
         }
         U64 bishops = pos.pieces(c, BISHOP);
         while (bishops) {
             Square s = pop_lsb(bishops);
-            mob += popcount(bishop_attacks(s, occ) & ~pos.pieces(c));
+            U64 att = bishop_attacks(s, occ);
+            int cnt = popcount(att & safeMask);
+            mobMG += cnt * params.bishopMobMG; mobEG += cnt * params.bishopMobEG;
+            if (att & kingZone) {
+                attackerCount++;
+                attackUnits += AttackWeight[BISHOP];
+            }
+            allAttacks[c] |= att;
+            minorAtt[c] |= att;
         }
         U64 rooks = pos.pieces(c, ROOK);
         while (rooks) {
             Square s = pop_lsb(rooks);
-            mob += popcount(rook_attacks(s, occ) & ~pos.pieces(c));
+            U64 att = rook_attacks(s, occ);
+            int cnt = popcount(att & safeMask);
+            mobMG += cnt * params.rookMobMG; mobEG += cnt * params.rookMobEG;
+            if (att & kingZone) {
+                attackerCount++;
+                attackUnits += AttackWeight[ROOK];
+                // Wieza na otwartej linii krola = ekstra niebezpiecznie
+                int rf = file_of(s);
+                int kf_them = file_of(theirKsq);
+                if (std::abs(rf - kf_them) <= 1) {
+                    U64 fileBB = FileA_BB << rf;
+                    if (!(pos.pieces(PAWN) & fileBB))
+                        attackUnits += 2; // wieza na otwartej linii na krola
+                }
+            }
+            allAttacks[c] |= att;
+            rookAtt[c] |= att;
             U64 fileBB = FileA_BB << file_of(s);
-            if (!(pos.pieces(PAWN) & fileBB))       { mg += sign * 20; eg += sign * 15; }
-            else if (!(pos.pieces(c, PAWN) & fileBB)) { mg += sign * 10; eg += sign * 8; }
-            U64 rank7 = (c == WHITE) ? Rank7_BB : Rank2_BB;
-            if (square_bb(s) & rank7) { mg += sign * 20; eg += sign * 30; }
+            if (!(pos.pieces(PAWN) & fileBB))         { mg += sign * params.rookOpenFileMG; eg += sign * params.rookOpenFileEG; }
+            else if (!(pos.pieces(c, PAWN) & fileBB)) { mg += sign * (params.rookOpenFileMG/2); eg += sign * (params.rookOpenFileEG/2); }
+            if (square_bb(s) & ((c == WHITE) ? Rank7_BB : Rank2_BB))
+                { mg += sign * params.rook7thRankMG; eg += sign * params.rook7thRankEG; }
         }
         U64 queens = pos.pieces(c, QUEEN);
         while (queens) {
             Square s = pop_lsb(queens);
-            mob += popcount(queen_attacks(s, occ) & ~pos.pieces(c));
+            U64 att = queen_attacks(s, occ);
+            int cnt = popcount(att & ~pos.pieces(c));
+            mobMG += cnt * params.queenMobMG; mobEG += cnt * params.queenMobEG;
+            if (att & kingZone) {
+                attackerCount++;
+                attackUnits += AttackWeight[QUEEN];
+                // Hetman kontaktujacy krola (bezposredni atak na pole krola)
+                if (att & square_bb(theirKsq))
+                    attackUnits += 3;
+            }
+            allAttacks[c] |= att;
         }
+        allAttacks[c] |= KingAttacks[(c == WHITE) ? kingWh : kingBl];
 
-        mg += sign * mob * 3;
-        eg += sign * mob * 2;
+        mg += sign * mobMG;
+        eg += sign * mobEG;
+
+        // === King safety — finalny wynik z attack units ===
+        // Kara stosowana tylko gdy co najmniej 2 figury atakuja
+        if (attackerCount >= 2) {
+            // Skaluj attackUnits przez ilosc atakujacych figur
+            attackUnits = attackUnits * (attackerCount - 1) / 2;
+            if (attackUnits < 0) attackUnits = 0;
+            if (attackUnits > 99) attackUnits = 99;
+            int penalty = SafetyTable[attackUnits];
+            // Kara dla PRZECIWNIKA (my atakujemy jego krola = dobrze dla nas)
+            mg += sign * penalty;
+            eg += sign * (penalty * 3 / 10); // 30% komponent w EG
+        }
+    }
+
+    // === Threat Detection ===
+    // Kara za figury atakowane przez tansze figury przeciwnika.
+    // Np. pionek atakuje skoczka, skoczek atakuje wieze — to grozba.
+    for (Color c : {WHITE, BLACK}) {
+        int sign = (c == WHITE) ? 1 : -1;
+        Color them = ~c;
+
+        // 1. Nasze figury atakowane przez wrogi pionek (bardzo grozne)
+        U64 threatenedByPawn = pos.pieces(c, KNIGHT, BISHOP) & pawnAtt[them];
+        mg -= sign * popcount(threatenedByPawn) * 25;
+        eg -= sign * popcount(threatenedByPawn) * 15;
+
+        U64 majorByPawn = (pos.pieces(c, ROOK) | pos.pieces(c, QUEEN)) & pawnAtt[them];
+        mg -= sign * popcount(majorByPawn) * 35;
+        eg -= sign * popcount(majorByPawn) * 20;
+
+        // 2. Nasze wieze/hetman atakowane przez wrogi skoczek/goniec
+        U64 majorByMinor = (pos.pieces(c, ROOK) | pos.pieces(c, QUEEN)) & minorAtt[them];
+        mg -= sign * popcount(majorByMinor) * 20;
+        eg -= sign * popcount(majorByMinor) * 10;
+
+        // 3. Nasz hetman atakowany przez wroga wieze
+        U64 queenByRook = pos.pieces(c, QUEEN) & rookAtt[them];
+        mg -= sign * popcount(queenByRook) * 20;
+        eg -= sign * popcount(queenByRook) * 10;
+
+        // 4. Hanging pieces: nasze figury atakowane i nie bronione
+        U64 attacked = pos.pieces(c) & allAttacks[them];
+        U64 defended = pos.pieces(c) & allAttacks[c];
+        U64 hanging = attacked & ~defended & ~pos.pieces(c, PAWN); // nie liczymy pionkow
+        mg -= sign * popcount(hanging) * 15;
+        eg -= sign * popcount(hanging) * 20;
     }
 
     // === Knight outposts ===
@@ -385,11 +630,11 @@ int evaluate(const Position& pos) {
                 bool cantBeAttacked = !(pos.pieces(them, PAWN) & adjFiles & frontRanks);
 
                 if (supported && cantBeAttacked) {
-                    mg += sign * 25;
-                    eg += sign * 15;
+                    mg += sign * params.knightOutpostMG;
+                    eg += sign * params.knightOutpostEG;
                 } else if (supported) {
-                    mg += sign * 12;
-                    eg += sign * 8;
+                    mg += sign * (params.knightOutpostMG / 2);
+                    eg += sign * (params.knightOutpostEG / 2);
                 }
             }
         }
@@ -404,10 +649,242 @@ int evaluate(const Position& pos) {
         eg += sign * popcount(connected) * 8;
     }
 
+    // === Bad bishop ===
+    // Goniec zablokowany wlasnymi pionkami na tym samym kolorze pol.
+    // Im wiecej pionkow na kolorze gonca, tym goniec mniej uzyteczny.
+    // Jasne pola: a2,b1,c2,d1... = (file+rank) parzyste
+    // Ciemne pola: a1,b2,c1,d2... = (file+rank) nieparzyste
+    constexpr U64 LightSquares = 0x55AA55AA55AA55AAULL; // pola jasne
+    constexpr U64 DarkSquares  = 0xAA55AA55AA55AA55ULL; // pola ciemne
+    for (Color c : {WHITE, BLACK}) {
+        int sign = (c == WHITE) ? 1 : -1;
+        U64 bishops = pos.pieces(c, BISHOP);
+        U64 ourPawns = pos.pieces(c, PAWN);
+        while (bishops) {
+            Square s = pop_lsb(bishops);
+            // Na jakim kolorze stoi goniec?
+            bool onLight = LightSquares & square_bb(s);
+            U64 sameColorPawns = ourPawns & (onLight ? LightSquares : DarkSquares);
+            int blocked = popcount(sameColorPawns);
+            // Kara: 4cp MG, 6cp EG za kazdy pionek blokujacy gonca
+            mg -= sign * blocked * 4;
+            eg -= sign * blocked * 6;
+        }
+    }
+
+    // === Connected rooks ===
+    // Bonus za wieze na tym samym rzedzie bez figur miedzy nimi.
+    for (Color c : {WHITE, BLACK}) {
+        int sign = (c == WHITE) ? 1 : -1;
+        U64 rooks = pos.pieces(c, ROOK);
+        if (popcount(rooks) >= 2) {
+            // Wyciagnij obie wieze
+            U64 tmp = rooks;
+            Square r1 = pop_lsb(tmp);
+            Square r2 = pop_lsb(tmp);
+            // Na tym samym rzedzie?
+            if (rank_of(r1) == rank_of(r2)) {
+                // Sprawdz czy miedzy nimi nic nie stoi
+                int minF = std::min(file_of(r1), file_of(r2));
+                int maxF = std::max(file_of(r1), file_of(r2));
+                U64 between = 0;
+                for (int f = minF + 1; f < maxF; f++)
+                    between |= square_bb(make_square(f, rank_of(r1)));
+                if (!(occ & between)) {
+                    mg += sign * 10;
+                    eg += sign * 15;
+                }
+            }
+            // Na tej samej kolumnie?
+            else if (file_of(r1) == file_of(r2)) {
+                int minR = std::min(rank_of(r1), rank_of(r2));
+                int maxR = std::max(rank_of(r1), rank_of(r2));
+                U64 between = 0;
+                for (int r = minR + 1; r < maxR; r++)
+                    between |= square_bb(make_square(file_of(r1), r));
+                if (!(occ & between)) {
+                    mg += sign * 8;
+                    eg += sign * 12;
+                }
+            }
+        }
+    }
+
+    // === Bishop vs Knight: open/closed position ===
+    // W otwartych pozycjach (malo pionkow w centrum) goniec > skoczek.
+    // W zamknietych (duzo pionkow) skoczek > goniec.
+    {
+        constexpr U64 centerMask = (FileC_BB | FileD_BB | FileE_BB | FileF_BB)
+                                 & (Rank3_BB | Rank4_BB | Rank5_BB | Rank6_BB);
+        int centralPawns = popcount(pos.pieces(PAWN) & centerMask);
+        // centralPawns: 0-2 = otwarta, 3-4 = srednia, 5+ = zamknieta
+        for (Color c : {WHITE, BLACK}) {
+            int sign = (c == WHITE) ? 1 : -1;
+            int nB = numBishops[c];
+            int nK = numKnights[c];
+            if (nB > nK) {
+                // Mamy wiecej goncow — bonus w otwartej, kara w zamknietej
+                int openBonus = (4 - centralPawns) * 5; // otwarta: +20, zamknieta: -5
+                mg += sign * openBonus;
+                eg += sign * openBonus;
+            } else if (nK > nB) {
+                // Mamy wiecej skoczkow — odwrotnie
+                int closedBonus = (centralPawns - 2) * 5; // zamknieta: +15, otwarta: -10
+                mg += sign * closedBonus;
+                eg += sign * closedBonus;
+            }
+        }
+    }
+
+    // === Central control ===
+    // Bonus za figury atakujace centralne pola (d4/d5/e4/e5).
+    // Kontrola centrum = wiecej przestrzeni i mozliwosci taktycznych.
+    {
+        constexpr U64 center4 = square_bb(SQ_D4) | square_bb(SQ_D5)
+                               | square_bb(SQ_E4) | square_bb(SQ_E5);
+        for (Color c : {WHITE, BLACK}) {
+            int sign = (c == WHITE) ? 1 : -1;
+            int centerControl = popcount(allAttacks[c] & center4);
+            mg += sign * centerControl * 5;  // 5cp za kazde kontrolowane pole centralne
+            eg += sign * centerControl * 2;
+        }
+    }
+
+    // === Space evaluation ===
+    // Kontrola pol na polowie przeciwnika za wlasnym lancuchem pionkow.
+    // Im wiecej bezpiecznych pol, tym wiecej manewrow dla figur.
+    // Tylko w middlegame (duzo figur), centralne kolumny (C-F).
+    if (phase >= TotalPhase / 2) {
+        constexpr U64 centerFiles = FileC_BB | FileD_BB | FileE_BB | FileF_BB;
+        for (Color c : {WHITE, BLACK}) {
+            int sign = (c == WHITE) ? 1 : -1;
+            Color them = ~c;
+            U64 ourPawns = pos.pieces(c, PAWN);
+            // Pola za naszymi pionkami (bezpieczne dla figur)
+            U64 behindPawns;
+            if (c == WHITE) {
+                behindPawns = (ourPawns >> 8) | (ourPawns >> 16) | (ourPawns >> 24);
+                behindPawns &= Rank2_BB | Rank3_BB | Rank4_BB;
+            } else {
+                behindPawns = (ourPawns << 8) | (ourPawns << 16) | (ourPawns << 24);
+                behindPawns &= Rank5_BB | Rank6_BB | Rank7_BB;
+            }
+            // Space = pola za pionkami, centralne kolumny, nie atakowane przez wrogi pionek
+            U64 safe = behindPawns & centerFiles & ~pawnAtt[them];
+            mg += sign * popcount(safe) * 2;
+        }
+    }
+
+    // === Trade bonus (endgame) ===
+    // Gdy masz przewage materialna — wymiana figur jest korzystna (latwiej wygrasz).
+    // Gdy jestes gorzej — unikaj wymian (trudniej przegrac z wiekszym materialem).
+    // Implementacja: skaluj eval w strone 0 gdy duzo figur na planszy i masz przewage,
+    // lub od 0 gdy malo figur i masz przewage.
+    // Prostsze podejscie: bonus za mniej figur na planszy gdy prowadzisz.
+    {
+        // Material z perspektywy bialych (mg score bez pozycyjnych)
+        int whiteMat = 0, blackMat = 0;
+        for (int pt = PAWN; pt <= QUEEN; pt++) {
+            whiteMat += popcount(pos.pieces(WHITE, PieceType(pt))) * PieceValuesMG[pt];
+            blackMat += popcount(pos.pieces(BLACK, PieceType(pt))) * PieceValuesMG[pt];
+        }
+        int matDiff = whiteMat - blackMat; // >0 = bialy prowadzi
+        // Im mniej figur na planszy, tym wieksza przewaga strony prowadzacej
+        // (bo mniej szans na komplikacje/kontratak)
+        int totalMat = whiteMat + blackMat;
+        // Skalowanie: pelen bonus w EG, brak w MG
+        // trade bonus = matDiff * (1 - totalMat/maxMat) * scale
+        // maxMat ~= 2*(8*100 + 2*320 + 2*330 + 2*500 + 950) = ~7800
+        if (matDiff > 0) {
+            int tradeBonus = matDiff * (7800 - totalMat) / 7800 / 10;
+            eg += tradeBonus;
+        } else if (matDiff < 0) {
+            int tradeBonus = (-matDiff) * (7800 - totalMat) / 7800 / 10;
+            eg -= tradeBonus;
+        }
+    }
+
+    // === King centralization w endgame ===
+    // Agresywniejszy bonus niz PST — krol w centrum wygrywa koncowki.
+    // Tylko gdy malo figur (faza < polowy).
+    if (phase < TotalPhase / 2) {
+        for (Color c : {WHITE, BLACK}) {
+            int sign = (c == WHITE) ? 1 : -1;
+            Square ksq = (c == WHITE) ? kingWh : kingBl;
+            // Dystans Chebyshev od centrum (d4/d5/e4/e5)
+            int kf = file_of(ksq);
+            int kr = rank_of(ksq);
+            int distFromCenter = std::max(std::abs(kf - 3), std::abs(kr - 3)); // 0=centrum, 3=rog
+            // Bonus: 0 w centrum, -15 na brzegu, -30 w rogu
+            eg += sign * (3 - distFromCenter) * 5;
+        }
+    }
+
+    // === Pawn majority ===
+    // Bonus za wiecej pionkow na jednym skrzydle — mogą stworzyc passed pawna.
+    // Kingsight = kolumny E-H, queenside = kolumny A-D.
+    {
+        constexpr U64 kingSide = FileE_BB | FileF_BB | FileG_BB | FileH_BB;
+        constexpr U64 queenSide = FileA_BB | FileB_BB | FileC_BB | FileD_BB;
+        for (Color c : {WHITE, BLACK}) {
+            int sign = (c == WHITE) ? 1 : -1;
+            Color them = ~c;
+            int ourKS  = popcount(pos.pieces(c, PAWN) & kingSide);
+            int ourQS  = popcount(pos.pieces(c, PAWN) & queenSide);
+            int theirKS = popcount(pos.pieces(them, PAWN) & kingSide);
+            int theirQS = popcount(pos.pieces(them, PAWN) & queenSide);
+            // Bonus za wiekszosc na skrzydle (moze stworzyc passed pawna)
+            if (ourKS > theirKS) eg += sign * (ourKS - theirKS) * 8;
+            if (ourQS > theirQS) eg += sign * (ourQS - theirQS) * 8;
+        }
+    }
+
+    // === Piece activity w endgame ===
+    // Kara za figury na brzegu planszy (rank 1/8 lub file A/H) w koncowce.
+    // Aktywne figury w centrum sa warte wiecej.
+    if (phase < TotalPhase * 2 / 3) {
+        constexpr U64 edgeSquares = FileA_BB | FileH_BB | Rank1_BB | Rank8_BB;
+        for (Color c : {WHITE, BLACK}) {
+            int sign = (c == WHITE) ? 1 : -1;
+            // Skoczki i gonce na brzegu — kara
+            U64 minors = pos.pieces(c, KNIGHT) | pos.pieces(c, BISHOP);
+            int edgeMinors = popcount(minors & edgeSquares);
+            eg -= sign * edgeMinors * 10;
+        }
+    }
+
     // === Tempo bonus ===
-    // Strona do ruchu ma lekka przewage (moze zagrozic)
-    mg += (pos.side_to_move() == WHITE) ? 15 : -15;
-    eg += (pos.side_to_move() == WHITE) ? 5 : -5;
+    mg += (pos.side_to_move() == WHITE) ? params.tempoMG : -params.tempoMG;
+    eg += (pos.side_to_move() == WHITE) ? params.tempoEG : -params.tempoEG;
+
+    // === Mating with major pieces (KQ vs K, KR vs K, KQR vs K) ===
+    // Gdy mamy ogromna przewage materialna i wrog ma samego krola (lub prawie),
+    // pchaj wrogiego krola na brzeg/rog i naszego krola blisko.
+    for (Color c : {WHITE, BLACK}) {
+        int sign = (c == WHITE) ? 1 : -1;
+        Color them = ~c;
+        // Sprawdz czy wrog ma tylko krola (lub krola + max 1 pionka)
+        U64 theirPieces = pos.pieces(them) & ~pos.pieces(them, KING);
+        int theirPieceCount = popcount(theirPieces);
+        // Czy mamy wystarczajaco duzo materialu do matowania?
+        bool hasQueen = pos.pieces(c, QUEEN) != 0;
+        bool hasRook  = pos.pieces(c, ROOK) != 0;
+
+        if (theirPieceCount <= 1 && (hasQueen || hasRook)) {
+            Square ourKing   = (c == WHITE) ? kingWh : kingBl;
+            Square theirKing = (c == WHITE) ? kingBl : kingWh;
+            int tkf = file_of(theirKing);
+            int tkr = rank_of(theirKing);
+            // Dystans wroga krola od centrum — im dalej = lepiej dla nas
+            int edgeDist = std::min(std::min(tkf, 7 - tkf), std::min(tkr, 7 - tkr)); // 0=brzeg, 3=centrum
+            int cornerBonus = (3 - edgeDist) * 30; // 0-90 za pchanie na brzeg
+            // Dystans miedzy krolami — blizej = lepiej (pomagamy matowac)
+            int kingDist = std::max(std::abs(file_of(ourKing) - tkf),
+                                     std::abs(rank_of(ourKing) - tkr));
+            int closenessBonus = (7 - kingDist) * 10; // 0-70 za bliskosc
+            eg += sign * (cornerBonus + closenessBonus);
+        }
+    }
 
     // Tapered eval
     if (phase > TotalPhase) phase = TotalPhase;

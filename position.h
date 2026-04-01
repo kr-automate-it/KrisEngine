@@ -11,6 +11,7 @@ struct StateInfo {
     Piece         captured;
     U64           hash;
     U64           pawnHash;
+    int           staticEval;  // eval zapisany w search (do improving heuristic)
     StateInfo*    previous;
 };
 

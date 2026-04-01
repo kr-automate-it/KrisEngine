@@ -9,6 +9,7 @@ struct PawnEntry {
     U64 key;
     int mg;
     int eg;
+    U64 passedPawns[2]; // bitboard passed pawns per color (WHITE, BLACK)
 };
 
 class PawnTable {
@@ -17,7 +18,7 @@ public:
     ~PawnTable() { delete[] table; }
 
     PawnEntry* probe(U64 key, bool& found);
-    void store(U64 key, int mg, int eg);
+    void store(U64 key, int mg, int eg, U64 passedW = 0, U64 passedB = 0);
     void clear();
 
 private:

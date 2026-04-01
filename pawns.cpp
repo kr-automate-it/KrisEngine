@@ -18,9 +18,11 @@ PawnEntry* PawnTable::probe(U64 key, bool& found) {
     return e;
 }
 
-void PawnTable::store(U64 key, int mg, int eg) {
+void PawnTable::store(U64 key, int mg, int eg, U64 passedW, U64 passedB) {
     PawnEntry* e = &table[key % SIZE];
     e->key = key;
     e->mg = mg;
     e->eg = eg;
+    e->passedPawns[0] = passedW;
+    e->passedPawns[1] = passedB;
 }
