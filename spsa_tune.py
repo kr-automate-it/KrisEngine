@@ -15,6 +15,7 @@ import random
 import math
 import json
 import os
+import re
 import sys
 import time
 import argparse
@@ -22,8 +23,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # === Konfiguracja parametrow do tuningu ===
-# (nazwa UCI, wartosc startowa, min, max, delta startowe)
-# Delta = rozmiar perturbacji. Wieksze = szybszy ale mniej dokladny tuning.
 
 @dataclass
 class TuneParam:
@@ -33,16 +32,41 @@ class TuneParam:
     max_val: float
     delta: float  # c_k w SPSA — perturbacja
 
-PARAMS = [
-    # Search
-    TuneParam("aspirationWindow",      25, 10, 100, 5),
-    TuneParam("nullMoveBaseR",          3,  2,   5, 0.5),
-    TuneParam("futilityMargin",       200, 50, 400, 20),
-    TuneParam("reverseFutilityMargin",120, 50, 250, 15),
-    TuneParam("razorMarginBase",      300,100, 500, 25),
-    TuneParam("razorMarginPerDepth",  200, 50, 400, 20),
-    TuneParam("lmpBase",                3,  1,   8, 1),
+
+def read_params_from_h(path="params.h"):
+    """Czyta aktualne wartosci parametrow z params.h."""
+    values = {}
+    with open(path) as f:
+        for line in f:
+            m = re.match(r'\s+int\s+(\w+)\s*=\s*(\d+)\s*;', line)
+            if m:
+                values[m.group(1)] = int(m.group(2))
+    return values
+
+
+# (nazwa, min, max, delta) — wartosci startowe brane z params.h
+PARAM_RANGES = [
+    ("aspirationWindow",      10, 100, 5),
+    ("nullMoveBaseR",          2,   5, 0.5),
+    ("futilityMargin",        50, 400, 20),
+    ("reverseFutilityMargin", 50, 250, 15),
+    ("razorMarginBase",      100, 500, 25),
+    ("razorMarginPerDepth",   50, 400, 20),
+    ("lmpBase",                1,   8, 1),
 ]
+
+
+def build_params(params_h_path="params.h"):
+    """Buduje liste TuneParam z zakresow + aktualnych wartosci z params.h."""
+    values = read_params_from_h(params_h_path)
+    params = []
+    for name, lo, hi, delta in PARAM_RANGES:
+        val = values.get(name)
+        if val is None:
+            print(f"  UWAGA: {name} nie znaleziony w params.h, pomijam")
+            continue
+        params.append(TuneParam(name, float(val), lo, hi, delta))
+    return params
 
 
 def make_options(params: list[TuneParam], perturbation: list[int] | None = None) -> dict:
@@ -165,7 +189,8 @@ def play_match(engine_path: str, opts_plus: dict, opts_minus: dict,
 
 
 def spsa_tune(engine_path: str, iterations: int = 100, games_per_iter: int = 24,
-              tc_ms: int = 5000, inc_ms: int = 50, resume: bool = False):
+              tc_ms: int = 5000, inc_ms: int = 50, resume: bool = False,
+              params_h: str = "params.h"):
     """
     Glowna petla SPSA.
 
@@ -178,7 +203,7 @@ def spsa_tune(engine_path: str, iterations: int = 100, games_per_iter: int = 24,
     6. Zmniejszaj a_k i c_k w czasie (annealing)
     """
 
-    params = [TuneParam(p.name, p.value, p.min_val, p.max_val, p.delta) for p in PARAMS]
+    params = build_params(params_h)
 
     state_file = Path("spsa_state.json")
     log_file = Path("spsa_log.txt")
@@ -283,11 +308,14 @@ def spsa_tune(engine_path: str, iterations: int = 100, games_per_iter: int = 24,
     print(f"\n{'='*60}")
     print("FINALNE WARTOSCI (do wklejenia w params.h):")
     print(f"{'='*60}")
+    orig_params = build_params(params_h)
+    orig_map = {p.name: p for p in orig_params}
     for p in params:
-        orig = next(op for op in PARAMS if op.name == p.name)
-        diff = p.value - orig.value
-        marker = " *" if abs(diff) > orig.delta else ""
-        print(f"  {p.name:25s} = {int(round(p.value)):4d}  (bylo {int(round(orig.value)):4d}, zmiana {diff:+.1f}){marker}")
+        orig = orig_map.get(p.name)
+        orig_val = orig.value if orig else 0
+        diff = p.value - orig_val
+        marker = " *" if abs(diff) > p.delta else ""
+        print(f"  {p.name:25s} = {int(round(p.value)):4d}  (bylo {int(round(orig_val)):4d}, zmiana {diff:+.1f}){marker}")
 
     # Zapisz gotowy kod C++
     with open("params_tuned.h", "w") as f:

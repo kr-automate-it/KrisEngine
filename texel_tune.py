@@ -25,37 +25,62 @@ import glob
 import json
 import math
 import os
+import re
 import sys
 import time
 from pathlib import Path
 
 
-PARAMS = [
-    # (nazwa UCI, wartosc startowa, min, max, krok)
-    ("knightMobMG",  4,  0, 10, 1),
-    ("knightMobEG",  3,  0, 10, 1),
-    ("bishopMobMG",  6,  0, 10, 1),
-    ("bishopMobEG",  4,  0, 10, 1),
-    ("rookMobMG",    2,  0, 10, 1),
-    ("rookMobEG",    4,  0, 10, 1),
-    ("queenMobMG",   2,  0,  5, 1),
-    ("queenMobEG",   1,  0,  5, 1),
-    ("passedPawnScale", 100, 50, 200, 5),
-    ("bishopPairMG", 30,  0, 80, 5),
-    ("bishopPairEG", 50,  0, 100, 5),
-    ("isolatedPawnMG", 10, 0, 30, 2),
-    ("isolatedPawnEG", 15, 0, 30, 2),
-    ("doubledPawnMG",   5, 0, 20, 2),
-    ("doubledPawnEG",  10, 0, 20, 2),
-    ("knightOutpostMG", 25, 0, 50, 5),
-    ("knightOutpostEG", 15, 0, 30, 5),
-    ("rookOpenFileMG",  20, 0, 40, 3),
-    ("rookOpenFileEG",  15, 0, 30, 3),
-    ("rook7thRankMG",   20, 0, 40, 5),
-    ("rook7thRankEG",   30, 0, 50, 5),
-    ("tempoMG", 15, 0, 30, 2),
-    ("tempoEG",  5, 0, 15, 2),
+def read_params_from_h(path="params.h"):
+    """Czyta aktualne wartosci parametrow z params.h."""
+    values = {}
+    with open(path) as f:
+        for line in f:
+            m = re.match(r'\s+int\s+(\w+)\s*=\s*(\d+)\s*;', line)
+            if m:
+                values[m.group(1)] = int(m.group(2))
+    return values
+
+
+# (nazwa UCI, min, max, krok) — wartosci startowe brane z params.h
+PARAM_RANGES = [
+    ("knightMobMG",    0, 10, 1),
+    ("knightMobEG",    0, 10, 1),
+    ("bishopMobMG",    0, 15, 1),
+    ("bishopMobEG",    0, 10, 1),
+    ("rookMobMG",      0, 10, 1),
+    ("rookMobEG",      0, 12, 1),
+    ("queenMobMG",     0,  8, 1),
+    ("queenMobEG",     0,  8, 1),
+    ("passedPawnScale", 50, 200, 5),
+    ("bishopPairMG",   0, 80, 5),
+    ("bishopPairEG",   0, 100, 5),
+    ("isolatedPawnMG", 0, 30, 2),
+    ("isolatedPawnEG", 0, 30, 2),
+    ("doubledPawnMG",  0, 20, 2),
+    ("doubledPawnEG",  0, 20, 2),
+    ("knightOutpostMG", 0, 50, 5),
+    ("knightOutpostEG", 0, 50, 5),
+    ("rookOpenFileMG",  0, 50, 3),
+    ("rookOpenFileEG",  0, 40, 3),
+    ("rook7thRankMG",   0, 50, 5),
+    ("rook7thRankEG",   0, 50, 5),
+    ("tempoMG",        0, 35, 2),
+    ("tempoEG",        0, 20, 2),
 ]
+
+
+def build_params(params_h_path="params.h"):
+    """Buduje liste PARAMS z zakresow + aktualnych wartosci z params.h."""
+    values = read_params_from_h(params_h_path)
+    params = []
+    for name, lo, hi, step in PARAM_RANGES:
+        val = values.get(name)
+        if val is None:
+            print(f"  UWAGA: {name} nie znaleziony w params.h, pomijam")
+            continue
+        params.append((name, val, lo, hi, step))
+    return params
 
 
 def sigmoid(x, K=1.13):
@@ -149,8 +174,9 @@ def find_K(evals, results):
     return best_K
 
 
-def texel_tune(engine_path, positions, iterations=5, depth=1):
+def texel_tune(engine_path, positions, iterations=5, depth=1, params_h="params.h"):
     """Local Search Texel Tuning."""
+    PARAMS = build_params(params_h)
     current = {p[0]: p[1] for p in PARAMS}
     results = [r for _, r in positions]
 
@@ -169,7 +195,7 @@ def texel_tune(engine_path, positions, iterations=5, depth=1):
         improved = False
         print(f"--- Iteracja {it+1}/{iterations} (MSE = {base_error:.6f}) ---")
 
-        for name, default, lo, hi, step in PARAMS:
+        for name, default, lo, hi, step in build_params(params_h):
             old_val = current[name]
             best_val = old_val
             best_err = base_error
