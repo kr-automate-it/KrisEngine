@@ -813,6 +813,7 @@ SearchResult search(Position& pos, SearchInfo& info) {
 
         int score;
         int aspDelta = params.aspirationWindow; // startowe okno (25)
+        int failLowCount = 0;
         while (true) {
             score = alpha_beta(pos, depth, alpha, beta, info, 0, true);
 
@@ -821,8 +822,13 @@ SearchResult search(Position& pos, SearchInfo& info) {
 
             // Fail-low: wynik ponizej okna — poszerz w dol stopniowo
             if (score <= alpha) {
+                // Fail-low = pozycja gorsza niz myslal — daj wiecej czasu
+                failLowCount++;
+                if (failLowCount >= 2 && info.timeLimit > 0)
+                    timeFactor = std::min(timeFactor + 0.4, 2.5);
+                beta = (alpha + beta) / 2; // sciagnij beta blizej (pomaga zbieznosci)
                 alpha = std::max(-VALUE_INFINITE, score - aspDelta);
-                aspDelta *= 2; // 25 → 50 → 100 → 200 → ...
+                aspDelta *= 2;
                 if (aspDelta > 500) alpha = -VALUE_INFINITE;
                 continue;
             }
@@ -833,6 +839,7 @@ SearchResult search(Position& pos, SearchInfo& info) {
                 if (aspDelta > 500) beta = VALUE_INFINITE;
                 continue;
             }
+            failLowCount = 0;
             break; // Wynik miesci sie w oknie
         }
 
@@ -901,28 +908,33 @@ SearchResult search(Position& pos, SearchInfo& info) {
                     timeFactor = std::max(1.0, timeFactor * 0.9);
             } else {
                 stabilityCount = 0;
-                timeFactor = std::min(timeFactor + 0.3, 2.0); // addytywny, nie multiplikatywny
+                // Bestmove sie zmienil — mysl dluzej (pozycja niestabilna)
+                timeFactor = std::min(timeFactor + 0.4, 2.5);
             }
 
-            // Eval spadl — klopoty, mysl dluzej (ale ograniczony efekt)
+            // Eval spadl — klopoty, mysl dluzej
             if (prevScore > -VALUE_MATE + 100) {
                 int drop = prevScore - score;
                 if (drop > 50)
-                    timeFactor = std::min(timeFactor + 0.3, 2.0);
+                    timeFactor = std::min(timeFactor + 0.4, 2.5);
                 else if (drop > 25)
-                    timeFactor = std::min(timeFactor + 0.15, 2.0);
+                    timeFactor = std::min(timeFactor + 0.2, 2.5);
             }
+
+            // Eval wzrosl znaczaco — mozemy oszczedzic czas
+            if (score > prevScore + 30 && stabilityCount >= 2)
+                timeFactor = std::max(0.8, timeFactor * 0.85);
 
             prevBestMove = result.bestMove;
             prevScore = score;
 
-            // Easy move: ruch stabilny od 6+ iteracji i depth >= 8 — oszczedz czas
-            if (stabilityCount >= 6 && depth >= 8 && elapsed > info.timeLimit * 0.35) {
+            // Easy move: ruch stabilny od 7+ iteracji i depth >= 10 — oszczedz czas
+            if (stabilityCount >= 7 && depth >= 10 && elapsed > info.timeLimit * 0.25) {
                 break;
             }
 
-            // Early stop: ruch stabilny od 4+ iteracji i zuzylismy >50% czasu
-            if (stabilityCount >= 4 && elapsed > info.timeLimit * 0.5) {
+            // Early stop: ruch stabilny od 5+ iteracji i zuzylismy >55% czasu
+            if (stabilityCount >= 5 && elapsed > info.timeLimit * 0.55) {
                 break;
             }
 
