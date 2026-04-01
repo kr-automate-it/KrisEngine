@@ -97,11 +97,11 @@ static void parse_go(std::istringstream& is) {
         if (movestogo > 0) {
             searchInfo.timeLimit = timeLeft / (movestogo + 1) + inc * 3 / 4;
         } else {
-            // Im wiecej figur (midgame), tym mniej ruchow zakladamy (wiecej czasu/ruch)
-            // Endgame: 30 ruchow, midgame: 20 ruchow
-            int movesLeft = 30 - nonPawnPieces / 3; // ~20-30
-            if (movesLeft < 15) movesLeft = 15;
-            if (movesLeft > 35) movesLeft = 35;
+            // Im mniej figur, tym mniej ruchow do konca — wiecej czasu/ruch
+            // Endgame (nonPawn~2-4): 15-18 ruchow, Midgame (nonPawn~20): 25 ruchow
+            int movesLeft = 15 + nonPawnPieces / 2; // endgame: ~16, midgame: ~25
+            if (movesLeft < 12) movesLeft = 12;
+            if (movesLeft > 30) movesLeft = 30;
             searchInfo.timeLimit = timeLeft / movesLeft + inc * 3 / 4;
         }
 

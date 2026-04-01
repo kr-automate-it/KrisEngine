@@ -933,8 +933,8 @@ SearchResult search(Position& pos, SearchInfo& info) {
             prevBestMove = result.bestMove;
             prevScore = score;
 
-            // Easy move: ruch stabilny od 7+ iteracji i depth >= 10 — oszczedz czas
-            if (stabilityCount >= 7 && depth >= 10 && elapsed > info.timeLimit * 0.25) {
+            // Easy move: ruch stabilny od 8+ iteracji i depth >= 12 — oszczedz czas
+            if (stabilityCount >= 8 && depth >= 12 && elapsed > info.timeLimit * 0.3) {
                 break;
             }
 
