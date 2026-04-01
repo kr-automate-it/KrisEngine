@@ -63,27 +63,31 @@ def read_uci_options(engine_path):
     return options
 
 
-# Parametry search do tuningu + delta (min/max/default brane z silnika UCI)
-SEARCH_PARAMS = {
-    "aspirationWindow":      5,
-    "nullMoveBaseR":         0.5,
-    "futilityMargin":        20,
-    "reverseFutilityMargin": 15,
-    "razorMarginBase":       25,
-    "razorMarginPerDepth":   20,
-    "lmpBase":               1,
-}
+# Parametry search do tuningu (min/max/default brane z silnika UCI)
+# Delta obliczana automatycznie jako ~7% zakresu (min-max)
+SEARCH_PARAM_NAMES = [
+    "aspirationWindow",
+    "nullMoveBaseR",
+    "futilityMargin",
+    "reverseFutilityMargin",
+    "razorMarginBase",
+    "razorMarginPerDepth",
+    "lmpBase",
+]
 
 
 def build_params(engine_path):
-    """Buduje liste TuneParam z UCI opcji silnika + delt z SEARCH_PARAMS."""
+    """Buduje liste TuneParam z UCI opcji silnika. Delta = 7% zakresu."""
     options = read_uci_options(engine_path)
     params = []
-    for name, delta in SEARCH_PARAMS.items():
+    for name in SEARCH_PARAM_NAMES:
         opt = options.get(name)
         if opt is None:
             print(f"  UWAGA: {name} nie znaleziony w silniku UCI, pomijam")
             continue
+        # Delta proporcjonalna do zakresu — rowne traktowanie wszystkich parametrow
+        param_range = opt["max"] - opt["min"]
+        delta = max(0.5, param_range * 0.07)
         params.append(TuneParam(name, float(opt["default"]), opt["min"], opt["max"], delta))
     return params
 
@@ -239,8 +243,8 @@ def spsa_tune(engine_path: str, iterations: int = 100, games_per_iter: int = 24,
         print(f"Wznawiam od iteracji {start_iter}, zaladowane {len(state['params'])} parametrow")
 
     # SPSA hyperparameters
-    a = 5.0       # learning rate (bazowy)
-    A = 20.0      # stabilizacja (wieksze A = wolniejszy start, stabilniejszy)
+    a = 15.0      # learning rate (bazowy) — wieksze = szybsza zbieznosc
+    A = 10.0      # stabilizacja (mniejsze A = szybszy start)
     alpha = 0.602  # wykladnik learning rate
     gamma = 0.101  # wykladnik perturbacji
 
