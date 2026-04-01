@@ -33,39 +33,58 @@ class TuneParam:
     delta: float  # c_k w SPSA — perturbacja
 
 
-def read_params_from_h(path="params.h"):
-    """Czyta aktualne wartosci parametrow z params.h."""
-    values = {}
-    with open(path) as f:
-        for line in f:
-            m = re.match(r'\s+int\s+(\w+)\s*=\s*(\d+)\s*;', line)
-            if m:
-                values[m.group(1)] = int(m.group(2))
-    return values
+def read_uci_options(engine_path):
+    """Czyta opcje UCI z silnika (nazwa -> {default, min, max})."""
+    import subprocess
+    proc = subprocess.Popen(
+        [engine_path], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True
+    )
+    proc.stdin.write("uci\n")
+    proc.stdin.flush()
+    options = {}
+    while True:
+        line = proc.stdout.readline().strip()
+        if line == "uciok":
+            break
+        m = re.match(
+            r'option name (\S+) type spin default (\d+) min (\d+) max (\d+)',
+            line
+        )
+        if m:
+            options[m.group(1)] = {
+                "default": int(m.group(2)),
+                "min": int(m.group(3)),
+                "max": int(m.group(4)),
+            }
+    proc.stdin.write("quit\n")
+    proc.stdin.flush()
+    proc.wait()
+    return options
 
 
-# (nazwa, min, max, delta) — wartosci startowe brane z params.h
-PARAM_RANGES = [
-    ("aspirationWindow",      10, 100, 5),
-    ("nullMoveBaseR",          2,   5, 0.5),
-    ("futilityMargin",        50, 400, 20),
-    ("reverseFutilityMargin", 50, 250, 15),
-    ("razorMarginBase",      100, 500, 25),
-    ("razorMarginPerDepth",   50, 400, 20),
-    ("lmpBase",                1,   8, 1),
-]
+# Parametry search do tuningu + delta (min/max/default brane z silnika UCI)
+SEARCH_PARAMS = {
+    "aspirationWindow":      5,
+    "nullMoveBaseR":         0.5,
+    "futilityMargin":        20,
+    "reverseFutilityMargin": 15,
+    "razorMarginBase":       25,
+    "razorMarginPerDepth":   20,
+    "lmpBase":               1,
+}
 
 
-def build_params(params_h_path="params.h"):
-    """Buduje liste TuneParam z zakresow + aktualnych wartosci z params.h."""
-    values = read_params_from_h(params_h_path)
+def build_params(engine_path):
+    """Buduje liste TuneParam z UCI opcji silnika + delt z SEARCH_PARAMS."""
+    options = read_uci_options(engine_path)
     params = []
-    for name, lo, hi, delta in PARAM_RANGES:
-        val = values.get(name)
-        if val is None:
-            print(f"  UWAGA: {name} nie znaleziony w params.h, pomijam")
+    for name, delta in SEARCH_PARAMS.items():
+        opt = options.get(name)
+        if opt is None:
+            print(f"  UWAGA: {name} nie znaleziony w silniku UCI, pomijam")
             continue
-        params.append(TuneParam(name, float(val), lo, hi, delta))
+        params.append(TuneParam(name, float(opt["default"]), opt["min"], opt["max"], delta))
     return params
 
 
@@ -189,8 +208,7 @@ def play_match(engine_path: str, opts_plus: dict, opts_minus: dict,
 
 
 def spsa_tune(engine_path: str, iterations: int = 100, games_per_iter: int = 24,
-              tc_ms: int = 5000, inc_ms: int = 50, resume: bool = False,
-              params_h: str = "params.h"):
+              tc_ms: int = 5000, inc_ms: int = 50, resume: bool = False):
     """
     Glowna petla SPSA.
 
@@ -203,7 +221,7 @@ def spsa_tune(engine_path: str, iterations: int = 100, games_per_iter: int = 24,
     6. Zmniejszaj a_k i c_k w czasie (annealing)
     """
 
-    params = build_params(params_h)
+    params = build_params(engine_path)
 
     state_file = Path("spsa_state.json")
     log_file = Path("spsa_log.txt")
@@ -308,7 +326,7 @@ def spsa_tune(engine_path: str, iterations: int = 100, games_per_iter: int = 24,
     print(f"\n{'='*60}")
     print("FINALNE WARTOSCI (do wklejenia w params.h):")
     print(f"{'='*60}")
-    orig_params = build_params(params_h)
+    orig_params = build_params(engine_path)
     orig_map = {p.name: p for p in orig_params}
     for p in params:
         orig = orig_map.get(p.name)

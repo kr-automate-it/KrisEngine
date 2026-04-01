@@ -31,55 +31,74 @@ import time
 from pathlib import Path
 
 
-def read_params_from_h(path="params.h"):
-    """Czyta aktualne wartosci parametrow z params.h."""
-    values = {}
-    with open(path) as f:
-        for line in f:
-            m = re.match(r'\s+int\s+(\w+)\s*=\s*(\d+)\s*;', line)
-            if m:
-                values[m.group(1)] = int(m.group(2))
-    return values
+def read_uci_options(engine_path):
+    """Czyta opcje UCI z silnika (nazwa -> {default, min, max})."""
+    import subprocess
+    proc = subprocess.Popen(
+        [engine_path], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True
+    )
+    proc.stdin.write("uci\n")
+    proc.stdin.flush()
+    options = {}
+    while True:
+        line = proc.stdout.readline().strip()
+        if line == "uciok":
+            break
+        m = re.match(
+            r'option name (\S+) type spin default (\d+) min (\d+) max (\d+)',
+            line
+        )
+        if m:
+            options[m.group(1)] = {
+                "default": int(m.group(2)),
+                "min": int(m.group(3)),
+                "max": int(m.group(4)),
+            }
+    proc.stdin.write("quit\n")
+    proc.stdin.flush()
+    proc.wait()
+    return options
 
 
-# (nazwa UCI, min, max, krok) — wartosci startowe brane z params.h
-PARAM_RANGES = [
-    ("knightMobMG",    0, 10, 1),
-    ("knightMobEG",    0, 10, 1),
-    ("bishopMobMG",    0, 15, 1),
-    ("bishopMobEG",    0, 10, 1),
-    ("rookMobMG",      0, 10, 1),
-    ("rookMobEG",      0, 12, 1),
-    ("queenMobMG",     0,  8, 1),
-    ("queenMobEG",     0,  8, 1),
-    ("passedPawnScale", 50, 200, 5),
-    ("bishopPairMG",   0, 80, 5),
-    ("bishopPairEG",   0, 100, 5),
-    ("isolatedPawnMG", 0, 30, 2),
-    ("isolatedPawnEG", 0, 30, 2),
-    ("doubledPawnMG",  0, 20, 2),
-    ("doubledPawnEG",  0, 20, 2),
-    ("knightOutpostMG", 0, 50, 5),
-    ("knightOutpostEG", 0, 50, 5),
-    ("rookOpenFileMG",  0, 50, 3),
-    ("rookOpenFileEG",  0, 40, 3),
-    ("rook7thRankMG",   0, 50, 5),
-    ("rook7thRankEG",   0, 50, 5),
-    ("tempoMG",        0, 35, 2),
-    ("tempoEG",        0, 20, 2),
-]
+# Parametry eval do tuningu + krok (min/max/default brane z silnika UCI)
+EVAL_PARAMS = {
+    "knightMobMG":    1,
+    "knightMobEG":    1,
+    "bishopMobMG":    1,
+    "bishopMobEG":    1,
+    "rookMobMG":      1,
+    "rookMobEG":      1,
+    "queenMobMG":     1,
+    "queenMobEG":     1,
+    "passedPawnScale": 5,
+    "bishopPairMG":   5,
+    "bishopPairEG":   5,
+    "isolatedPawnMG": 2,
+    "isolatedPawnEG": 2,
+    "doubledPawnMG":  2,
+    "doubledPawnEG":  2,
+    "knightOutpostMG": 5,
+    "knightOutpostEG": 5,
+    "rookOpenFileMG":  3,
+    "rookOpenFileEG":  3,
+    "rook7thRankMG":   5,
+    "rook7thRankEG":   5,
+    "tempoMG":        2,
+    "tempoEG":        2,
+}
 
 
-def build_params(params_h_path="params.h"):
-    """Buduje liste PARAMS z zakresow + aktualnych wartosci z params.h."""
-    values = read_params_from_h(params_h_path)
+def build_params(engine_path):
+    """Buduje liste PARAMS z UCI opcji silnika + krokow z EVAL_PARAMS."""
+    options = read_uci_options(engine_path)
     params = []
-    for name, lo, hi, step in PARAM_RANGES:
-        val = values.get(name)
-        if val is None:
-            print(f"  UWAGA: {name} nie znaleziony w params.h, pomijam")
+    for name, step in EVAL_PARAMS.items():
+        opt = options.get(name)
+        if opt is None:
+            print(f"  UWAGA: {name} nie znaleziony w silniku UCI, pomijam")
             continue
-        params.append((name, val, lo, hi, step))
+        params.append((name, opt["default"], opt["min"], opt["max"], step))
     return params
 
 
@@ -174,9 +193,9 @@ def find_K(evals, results):
     return best_K
 
 
-def texel_tune(engine_path, positions, iterations=5, depth=1, params_h="params.h"):
+def texel_tune(engine_path, positions, iterations=5, depth=1):
     """Local Search Texel Tuning."""
-    PARAMS = build_params(params_h)
+    PARAMS = build_params(engine_path)
     current = {p[0]: p[1] for p in PARAMS}
     results = [r for _, r in positions]
 
@@ -195,7 +214,7 @@ def texel_tune(engine_path, positions, iterations=5, depth=1, params_h="params.h
         improved = False
         print(f"--- Iteracja {it+1}/{iterations} (MSE = {base_error:.6f}) ---")
 
-        for name, default, lo, hi, step in build_params(params_h):
+        for name, default, lo, hi, step in PARAMS:
             old_val = current[name]
             best_val = old_val
             best_err = base_error
