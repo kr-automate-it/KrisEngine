@@ -68,6 +68,17 @@ static int get_cm_history(Piece prevPc, Square prevTo, Move m) {
     return cmHistory[prevPc][prevTo][move_to(m)];
 }
 
+// === Capture history ===
+// Statystyki bic: [atakujacy_piece][to_sq][typ_bitej_figury] -> score.
+// Ulepszenie MVV-LVA — uczy sie ktore bicia sa dobre w danym kontekscie.
+static int captureHistory[PIECE_NB][SQUARE_NB][PIECE_TYPE_NB];
+
+static void update_capture_history(Piece pc, Square to, PieceType captured, int bonus) {
+    int& val = captureHistory[pc][to][captured];
+    // Gravity (jak w cmHistory)
+    val += bonus - val * std::abs(bonus) / 512;
+}
+
 // === Countermove heuristic ===
 // Dla kazdego ruchu przeciwnika (piece, to_sq), pamietamy jaki nasz ruch go obalil.
 static Move countermoves[PIECE_NB][SQUARE_NB];
@@ -99,8 +110,10 @@ static int move_score(const Position& pos, Move m, Move ttMove, int ply,
     Piece captured = pos.piece_on(move_to(m));
     Piece mover    = pos.piece_on(move_from(m));
 
-    if (captured != NO_PIECE)
-        return SCORE_GOOD_CAPTURE + PieceValue[type_of(captured)] * 10 - PieceValue[type_of(mover)];
+    if (captured != NO_PIECE) {
+        int capHist = captureHistory[mover][move_to(m)][type_of(captured)];
+        return SCORE_GOOD_CAPTURE + PieceValue[type_of(captured)] * 10 - PieceValue[type_of(mover)] + capHist / 16;
+    }
 
     if (move_type(m) == PROMOTION)
         return SCORE_GOOD_CAPTURE + PieceValue[promo_type(m)];
@@ -510,6 +523,11 @@ static int alpha_beta(Position& pos, int depth, int alpha, int beta,
     Move quietsTried[64];
     int quietCount = 0;
 
+    // Capture history: pamietaj bicia do penalty przy cutoff
+    struct CapInfo { Piece pc; Square to; PieceType captured; };
+    CapInfo capsTried[64];
+    int capsCount = 0;
+
     int futMargin = params.futilityMargin * depth + (improving ? 50 : 0);
     bool canFutility = !inCheck && !pvNode && depth <= 3
                        && eval + futMargin < alpha;
@@ -588,6 +606,10 @@ static int alpha_beta(Position& pos, int depth, int alpha, int beta,
         // Zapisz cichy ruch do history penalty
         if (isQuiet && quietCount < 64)
             quietsTried[quietCount++] = m;
+
+        // Zapisz bicie do capture history penalty
+        if (isCapture && capsCount < 64)
+            capsTried[capsCount++] = {movPiece, move_to(m), type_of(capPiece)};
 
         StateInfo newSt;
         pos.do_move(m, newSt);
@@ -696,6 +718,14 @@ static int alpha_beta(Position& pos, int depth, int alpha, int beta,
                     }
                     update_cm_history(prevPc, prevTo, qm, -(depth * depth));
                 }
+            } else if (isCapture) {
+                // Capture history: bonus dla bicia ktore dalo cutoff
+                update_capture_history(movPiece, move_to(m), type_of(capPiece), depth * depth);
+                // Penalty dla bic ktore nie daly cutoff
+                for (int ci = 0; ci < capsCount - 1; ci++) {
+                    update_capture_history(capsTried[ci].pc, capsTried[ci].to,
+                                           capsTried[ci].captured, -(depth * depth));
+                }
             }
             break;
         }
@@ -724,6 +754,7 @@ void clear_search_tables() {
     std::memset(killers, 0, sizeof(killers));
     std::memset(countermoves, 0, sizeof(countermoves));
     std::memset(cmHistory, 0, sizeof(cmHistory));
+    std::memset(captureHistory, 0, sizeof(captureHistory));
 }
 
 // === Iterative Deepening — glowna petla ===
