@@ -1,4 +1,5 @@
 #include "position.h"
+#include "eval.h"
 #include <sstream>
 #include <cstring>
 
@@ -113,6 +114,19 @@ void Position::set(const std::string& fen) {
         if (board[s] != NO_PIECE && type_of(board[s]) == PAWN)
             st->pawnHash ^= Zobrist::psq[board[s]][s];
     }
+
+    // Incremental PSQ: material + PST od zera
+    st->psqMG = 0;
+    st->psqEG = 0;
+    st->gamePhase = 0;
+    for (int s = 0; s < 64; s++) {
+        Piece p = board[s];
+        if (p == NO_PIECE) continue;
+        int sign = (color_of(p) == WHITE) ? 1 : -1;
+        st->psqMG += sign * PSQ_MG[p][s];
+        st->psqEG += sign * PSQ_EG[p][s];
+        st->gamePhase += PhaseValue[type_of(p)];
+    }
 }
 
 std::string Position::fen() const {
@@ -196,6 +210,9 @@ void Position::do_move(Move m, StateInfo& newSt) {
 
     newSt.previous = st;
     newSt.pawnHash = st->pawnHash;
+    newSt.psqMG    = st->psqMG;
+    newSt.psqEG    = st->psqEG;
+    newSt.gamePhase = st->gamePhase;
 
     // Inkrementalny Zobrist hash
     U64 h = st->hash;
@@ -213,6 +230,11 @@ void Position::do_move(Move m, StateInfo& newSt) {
         h ^= Zobrist::psq[cap][capSq];
         if (type_of(cap) == PAWN)
             newSt.pawnHash ^= Zobrist::psq[cap][capSq];
+        // Incremental PSQ: usun bita figure
+        int capSign = (color_of(cap) == WHITE) ? 1 : -1;
+        newSt.psqMG -= capSign * PSQ_MG[cap][capSq];
+        newSt.psqEG -= capSign * PSQ_EG[cap][capSq];
+        newSt.gamePhase -= PhaseValue[type_of(cap)];
         remove_piece(capSq);
         newSt.halfmoveClock = 0;
     }
@@ -233,6 +255,10 @@ void Position::do_move(Move m, StateInfo& newSt) {
         }
         Piece rook = make_piece(sideToMove, ROOK);
         h ^= Zobrist::psq[rook][rookFrom] ^ Zobrist::psq[rook][rookTo];
+        // Incremental PSQ: wieza zmienia pole
+        int rookSign = (sideToMove == WHITE) ? 1 : -1;
+        newSt.psqMG += rookSign * (PSQ_MG[rook][rookTo] - PSQ_MG[rook][rookFrom]);
+        newSt.psqEG += rookSign * (PSQ_EG[rook][rookTo] - PSQ_EG[rook][rookFrom]);
         move_piece(rookFrom, rookTo);
     }
 
@@ -240,6 +266,10 @@ void Position::do_move(Move m, StateInfo& newSt) {
     h ^= Zobrist::psq[pc][from] ^ Zobrist::psq[pc][to];
     if (type_of(pc) == PAWN)
         newSt.pawnHash ^= Zobrist::psq[pc][from] ^ Zobrist::psq[pc][to];
+    // Incremental PSQ: figura zmienia pole
+    int pcSign = (sideToMove == WHITE) ? 1 : -1;
+    newSt.psqMG += pcSign * (PSQ_MG[pc][to] - PSQ_MG[pc][from]);
+    newSt.psqEG += pcSign * (PSQ_EG[pc][to] - PSQ_EG[pc][from]);
     move_piece(from, to);
 
     // Promocja
@@ -247,6 +277,10 @@ void Position::do_move(Move m, StateInfo& newSt) {
         Piece promoPc = make_piece(sideToMove, promo_type(m));
         h ^= Zobrist::psq[pc][to] ^ Zobrist::psq[promoPc][to];
         newSt.pawnHash ^= Zobrist::psq[pc][to]; // promocja: pionek znika z pawn hasha
+        // Incremental PSQ: pionek -> figura promowana
+        newSt.psqMG += pcSign * (PSQ_MG[promoPc][to] - PSQ_MG[pc][to]);
+        newSt.psqEG += pcSign * (PSQ_EG[promoPc][to] - PSQ_EG[pc][to]);
+        newSt.gamePhase += PhaseValue[type_of(promoPc)]; // pionek ma phase=0, wiec dodajemy nowa
         remove_piece(to);
         put_piece(promoPc, to);
     }
@@ -417,6 +451,9 @@ void Position::do_null_move(StateInfo& newSt) {
     newSt.epSquare = SQ_NONE;
     newSt.hash = h;
     newSt.pawnHash = st->pawnHash;
+    newSt.psqMG = st->psqMG;
+    newSt.psqEG = st->psqEG;
+    newSt.gamePhase = st->gamePhase;
 
     st = &newSt;
     sideToMove = ~sideToMove;

@@ -12,6 +12,9 @@ struct StateInfo {
     Piece         captured;
     U64           hash;
     U64           pawnHash;
+    int           psqMG;       // incremental: material + PST midgame score (white perspective)
+    int           psqEG;       // incremental: material + PST endgame score (white perspective)
+    int           gamePhase;   // incremental: game phase counter
     int           staticEval;  // eval zapisany w search (do improving heuristic)
     StateInfo*    previous;
 };
@@ -60,6 +63,9 @@ public:
     int halfmove_clock() const { return st->halfmoveClock; }
     U64 key() const { return st->hash; }
     U64 pawn_key() const { return st->pawnHash; }
+    int psq_mg() const { return st->psqMG; }
+    int psq_eg() const { return st->psqEG; }
+    int game_phase() const { return st->gamePhase; }
 
     void do_move(Move m, StateInfo& newSt);
     void undo_move(Move m);

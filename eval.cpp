@@ -1,6 +1,7 @@
 #include "eval.h"
 #include "pawns.h"
 #include "params.h"
+#include <cstring>
 
 // === Tapered Eval ===
 // Dwa zestawy tablic: midgame (MG) i endgame (EG).
@@ -178,9 +179,37 @@ static const int PieceValuesEG[PIECE_TYPE_NB] = {
 
 static int flip(int sq) { return sq ^ 56; }
 
+// === Precomputed PSQ tables: Material + PST combined, per Piece (not PieceType) ===
+// PSQ_MG[piece][sq] = materialMG + PST_MG for that piece on that square
+// White pieces: sq used as-is. Black pieces: sq flipped.
+static int psq_mg_data[PIECE_NB][SQUARE_NB];
+static int psq_eg_data[PIECE_NB][SQUARE_NB];
+const int (*PSQ_MG)[SQUARE_NB] = psq_mg_data;
+const int (*PSQ_EG)[SQUARE_NB] = psq_eg_data;
+
+static bool psq_initialized = false;
+void init_psq_tables() {
+    if (psq_initialized) return;
+    std::memset(psq_mg_data, 0, sizeof(psq_mg_data));
+    std::memset(psq_eg_data, 0, sizeof(psq_eg_data));
+    for (int pt = PAWN; pt <= KING; pt++) {
+        for (int sq = 0; sq < 64; sq++) {
+            int wPiece = make_piece(WHITE, PieceType(pt));
+            int bPiece = make_piece(BLACK, PieceType(pt));
+            psq_mg_data[wPiece][sq] = PieceValuesMG[pt] + PST_MG[pt][sq];
+            psq_eg_data[wPiece][sq] = PieceValuesEG[pt] + PST_EG[pt][sq];
+            psq_mg_data[bPiece][sq] = PieceValuesMG[pt] + PST_MG[pt][flip(sq)];
+            psq_eg_data[bPiece][sq] = PieceValuesEG[pt] + PST_EG[pt][flip(sq)];
+        }
+    }
+    psq_initialized = true;
+}
+
 int evaluate(const Position& pos) {
-    int mg = 0, eg = 0;
-    int phase = 0;
+    // Incremental material + PST (z StateInfo, aktualizowane w do_move)
+    int mg = pos.psq_mg();
+    int eg = pos.psq_eg();
+    int phase = pos.game_phase();
 
     // #8: Cache king squares i piece counts na poczatku
     Square kingWh = pos.king_square(WHITE);
@@ -193,29 +222,6 @@ int evaluate(const Position& pos) {
         popcount(pos.pieces(WHITE, KNIGHT)),
         popcount(pos.pieces(BLACK, KNIGHT))
     };
-
-    for (int sq = 0; sq < 64; sq++) {
-        Piece p = pos.piece_on(Square(sq));
-        if (p == NO_PIECE) continue;
-
-        PieceType pt = type_of(p);
-        Color c = color_of(p);
-        int pst_sq = (c == WHITE) ? sq : flip(sq);
-
-        int mgVal = PieceValuesMG[pt] + PST_MG[pt][pst_sq];
-        int egVal = PieceValuesEG[pt] + PST_EG[pt][pst_sq];
-
-        if (c == WHITE) { mg += mgVal; eg += egVal; }
-        else            { mg -= mgVal; eg -= egVal; }
-
-        switch (pt) {
-            case KNIGHT: phase += KnightPhase; break;
-            case BISHOP: phase += BishopPhase; break;
-            case ROOK:   phase += RookPhase;   break;
-            case QUEEN:  phase += QueenPhase;  break;
-            default: break;
-        }
-    }
 
     // #7: Bishop pair — uzyj cached counts
     if (numBishops[WHITE] >= 2) { mg += params.bishopPairMG; eg += params.bishopPairEG; }
