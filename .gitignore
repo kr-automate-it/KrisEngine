@@ -1,3 +1,10 @@
-*.o
 *.exe
+*.o
+*.bin
+*.pgn
+*.log
 *.txt
+spsa_state.json
+texel_state.json
+params_texel.h
+spsa_output.txt
