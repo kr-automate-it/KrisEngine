@@ -2,7 +2,7 @@ CXX = /c/msys64/ucrt64/bin/g++
 CXXFLAGS = -std=c++17 -O3 -march=native -flto -DNDEBUG
 LDFLAGS = -lpthread
 
-SRC = main.cpp bitboard.cpp position.cpp movegen.cpp eval.cpp search.cpp uci.cpp
+SRC = main.cpp bitboard.cpp position.cpp movegen.cpp eval.cpp search.cpp uci.cpp tt.cpp pawns.cpp zobrist.cpp book.cpp params.cpp
 OBJ = $(SRC:.cpp=.o)
 TARGET = chesscpp.exe
 
