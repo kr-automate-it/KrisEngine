@@ -958,8 +958,7 @@ SearchResult search_smp(Position& pos, SearchInfo& info, int numThreads) {
     for (int t = 1; t < numThreads; t++) {
         helpers.emplace_back([&info, &pos, t]() {
             // Kopia pozycji — kazdy watek ma wlasna
-            Position helperPos;
-            helperPos.set(pos.fen());
+            Position helperPos(pos);
 
             // Helper SearchInfo — wspoldzieli stopped/timeLimit z glownym,
             // ale ma wlasny nodes counter (dodamy do glownego na koncu)

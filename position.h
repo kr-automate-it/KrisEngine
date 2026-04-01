@@ -2,6 +2,7 @@
 #include "bitboard.h"
 #include "zobrist.h"
 #include <string>
+#include <cstring>
 
 struct StateInfo {
     CastlingRight castling;
@@ -17,6 +18,30 @@ struct StateInfo {
 
 class Position {
 public:
+    Position() = default;
+
+    // Copy: kopiuje cala pozycje bez konwersji do FEN
+    Position(const Position& other)
+        : sideToMove(other.sideToMove), rootState(*other.st), st(&rootState) {
+        std::memcpy(board, other.board, sizeof(board));
+        std::memcpy(byColor, other.byColor, sizeof(byColor));
+        std::memcpy(byType, other.byType, sizeof(byType));
+        rootState.previous = nullptr;
+    }
+
+    Position& operator=(const Position& other) {
+        if (this != &other) {
+            std::memcpy(board, other.board, sizeof(board));
+            std::memcpy(byColor, other.byColor, sizeof(byColor));
+            std::memcpy(byType, other.byType, sizeof(byType));
+            sideToMove = other.sideToMove;
+            rootState = *other.st;
+            rootState.previous = nullptr;
+            st = &rootState;
+        }
+        return *this;
+    }
+
     void set(const std::string& fen);
     std::string fen() const;
 
