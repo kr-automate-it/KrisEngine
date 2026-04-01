@@ -485,16 +485,22 @@ int evaluate(const Position& pos) {
         // Safe mobility: nie licz pol atakowanych przez wrogi pionek
         U64 safeMask = ~pos.pieces(c) & ~pawnAtt[them];
 
+        // King tropism: bonus za figury blisko wrogiego krola (Chebyshev distance)
+        int tkf = file_of(theirKsq), tkr = rank_of(theirKsq);
+        int tropismMG = 0;
+
         U64 knights = pos.pieces(c, KNIGHT);
         while (knights) {
             Square s = pop_lsb(knights);
             U64 att = KnightAttacks[s];
             int cnt = popcount(att & safeMask);
             mobMG += cnt * params.knightMobMG; mobEG += cnt * params.knightMobEG;
+            // King tropism: skoczek blisko krola = grozba
+            int dist = std::max(std::abs(file_of(s) - tkf), std::abs(rank_of(s) - tkr));
+            tropismMG += (7 - dist) * 3; // 0-21
             if (att & kingZone) {
                 attackerCount++;
                 attackUnits += AttackWeight[KNIGHT];
-                // Kontakt-szach: skoczek atakuje pole krola bezposrednio
                 if (att & square_bb(theirKsq))
                     attackUnits += 1;
             }
@@ -507,6 +513,8 @@ int evaluate(const Position& pos) {
             U64 att = bishop_attacks(s, occ);
             int cnt = popcount(att & safeMask);
             mobMG += cnt * params.bishopMobMG; mobEG += cnt * params.bishopMobEG;
+            int dist = std::max(std::abs(file_of(s) - tkf), std::abs(rank_of(s) - tkr));
+            tropismMG += (7 - dist) * 2; // 0-14
             if (att & kingZone) {
                 attackerCount++;
                 attackUnits += AttackWeight[BISHOP];
@@ -520,16 +528,17 @@ int evaluate(const Position& pos) {
             U64 att = rook_attacks(s, occ);
             int cnt = popcount(att & safeMask);
             mobMG += cnt * params.rookMobMG; mobEG += cnt * params.rookMobEG;
+            int dist = std::max(std::abs(file_of(s) - tkf), std::abs(rank_of(s) - tkr));
+            tropismMG += (7 - dist) * 3; // 0-21
             if (att & kingZone) {
                 attackerCount++;
                 attackUnits += AttackWeight[ROOK];
-                // Wieza na otwartej linii krola = ekstra niebezpiecznie
                 int rf = file_of(s);
                 int kf_them = file_of(theirKsq);
                 if (std::abs(rf - kf_them) <= 1) {
                     U64 fileBB = FileA_BB << rf;
                     if (!(pos.pieces(PAWN) & fileBB))
-                        attackUnits += 2; // wieza na otwartej linii na krola
+                        attackUnits += 2;
                 }
             }
             allAttacks[c] |= att;
@@ -546,10 +555,11 @@ int evaluate(const Position& pos) {
             U64 att = queen_attacks(s, occ);
             int cnt = popcount(att & ~pos.pieces(c));
             mobMG += cnt * params.queenMobMG; mobEG += cnt * params.queenMobEG;
+            int dist = std::max(std::abs(file_of(s) - tkf), std::abs(rank_of(s) - tkr));
+            tropismMG += (7 - dist) * 4; // 0-28
             if (att & kingZone) {
                 attackerCount++;
                 attackUnits += AttackWeight[QUEEN];
-                // Hetman kontaktujacy krola (bezposredni atak na pole krola)
                 if (att & square_bb(theirKsq))
                     attackUnits += 3;
             }
@@ -559,6 +569,9 @@ int evaluate(const Position& pos) {
 
         mg += sign * mobMG;
         eg += sign * mobEG;
+
+        // King tropism: bonus w midgame za figury blisko wrogiego krola
+        mg += sign * tropismMG / 4;
 
         // === King safety — finalny wynik z attack units ===
         // Kara stosowana tylko gdy co najmniej 2 figury atakuja
@@ -895,6 +908,52 @@ int evaluate(const Position& pos) {
     // Tapered eval
     if (phase > TotalPhase) phase = TotalPhase;
     int score = (mg * phase + eg * (TotalPhase - phase)) / TotalPhase;
+
+    // === Scale factor ===
+    // Skaluj eval w dol gdy strona prowadzaca ma male szanse na wygrana:
+    // - opposite color bishops bez wierz/hetmanow
+    // - brak pionkow po stronie prowadzacej
+    int scaleFactor = 64; // domyslnie 64/64 = 100%
+    {
+        Color stronger = (score > 0) ? WHITE : BLACK;
+        Color weaker   = ~stronger;
+        int strongPawns = popcount(pos.pieces(stronger, PAWN));
+        int strongMinors = popcount(pos.pieces(stronger, KNIGHT)) + popcount(pos.pieces(stronger, BISHOP));
+        int strongMajors = popcount(pos.pieces(stronger, ROOK)) + popcount(pos.pieces(stronger, QUEEN));
+
+        // Brak pionkow — trudno wygrać
+        if (strongPawns == 0) {
+            if (strongMajors == 0) {
+                // Tylko lekkie figury — max 1 goniec lub skoczek nie wygrywa
+                if (strongMinors <= 1)
+                    scaleFactor = 0; // remis
+                else if (strongMinors == 2)
+                    scaleFactor = 16; // 2 lekkie bez pionkow — prawie remis
+            } else {
+                scaleFactor = 48; // ciezkie figury bez pionkow — mozliwe ale trudne
+            }
+        }
+
+        // Opposite color bishops (bez wierz/hetmanow) — remisowosc
+        if (strongMajors == 0 && popcount(pos.pieces(stronger, BISHOP)) == 1
+            && popcount(pos.pieces(weaker, BISHOP)) == 1) {
+            constexpr U64 LightSq = 0x55AA55AA55AA55AAULL;
+            Square sb = lsb(pos.pieces(stronger, BISHOP));
+            Square wb = lsb(pos.pieces(weaker, BISHOP));
+            bool oppColor = ((LightSq & square_bb(sb)) != 0) != ((LightSq & square_bb(wb)) != 0);
+            if (oppColor)
+                scaleFactor = std::min(scaleFactor, strongPawns <= 1 ? 16 : 32);
+        }
+    }
+    // Aplikuj scale factor do endgame czesci
+    int egScaled = eg * scaleFactor / 64;
+    score = (mg * phase + egScaled * (TotalPhase - phase)) / TotalPhase;
+
+    // === Rule50 scaling ===
+    // Im blizej 50-move rule, tym bardziej eval zbliża się do 0
+    int rule50 = pos.halfmove_clock();
+    if (rule50 > 0)
+        score = score * (100 - rule50) / 100;
 
     return (pos.side_to_move() == WHITE) ? score : -score;
 }

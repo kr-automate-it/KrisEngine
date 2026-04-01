@@ -49,12 +49,12 @@ struct Params {
 
     // --- Search (SPSA-confirmed, nie zmieniaj przez Texel depth-1) ---
     int aspirationWindow   = 25;
-    int nullMoveBaseR       = 3;
+    int nullMoveBaseR       = 5;
     int futilityMargin     = 200;
     int reverseFutilityMargin = 110;
     int razorMarginBase    = 300;
     int razorMarginPerDepth = 200;
-    int lmpBase            = 4;
+    int lmpBase            = 7;
 };
 
 extern Params params;
