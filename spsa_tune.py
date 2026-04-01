@@ -295,10 +295,13 @@ def spsa_tune(engine_path: str, iterations: int = 100, games_per_iter: int = 24,
             c_k = p.delta * c_k_scale
             if c_k < 0.001:
                 continue
-            # Gradient SPSA: g_k = result_diff / (2 * c_k * direction)
-            # Ale direction jest +/-1, wiec: g_k = result_diff * direction / (2 * c_k)
+            # Gradient SPSA znormalizowany przez zakres parametru.
+            # Bez normalizacji male parametry (nullMoveBaseR) skacza,
+            # a duze (futilityMargin) stoja w miejscu.
+            param_range = p.max_val - p.min_val
+            if param_range < 1: param_range = 1
             gradient = result_diff * direction[i] / (2.0 * c_k)
-            step = a_k * gradient
+            step = a_k * gradient * param_range / 100.0
 
             old_val = p.value
             p.value += step
