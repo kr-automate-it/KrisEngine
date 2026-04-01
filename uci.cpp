@@ -140,9 +140,11 @@ static void parse_go(std::istringstream& is) {
         std::string bmStr = "bestmove " + pos.move_to_uci(result.bestMove);
         if (result.ponderMove != MOVE_NONE) {
             // Wyslij ponder move — GUI moze uzyc go ponder
+            // Walidacja: ruch musi byc legalny w pozycji PO bestmove
             StateInfo tmpSt;
             pos.do_move(result.bestMove, tmpSt);
-            if (pos.is_legal(result.ponderMove))
+            Square pfrom = move_from(result.ponderMove);
+            if (pos.piece_on(pfrom) != NO_PIECE && pos.is_legal(result.ponderMove))
                 bmStr += " ponder " + pos.move_to_uci(result.ponderMove);
             pos.undo_move(result.bestMove);
         }

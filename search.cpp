@@ -881,8 +881,13 @@ SearchResult search(Position& pos, SearchInfo& info) {
             pvLen++;
         }
         // Zapisz ponder move (2. ruch w PV = przewidywany ruch przeciwnika)
-        if (pvLen >= 2)
+        // Walidacja: po bestmove pozycja sie zmienia — sprawdz legalnosc
+        if (pvLen >= 2) {
+            // pvMoves[1] byl legalny w pozycji po pvMoves[0] (bo przeszedl is_legal w petli)
             result.ponderMove = pvMoves[1];
+        } else {
+            result.ponderMove = MOVE_NONE;
+        }
 
         for (int i = pvLen - 1; i >= 0; i--)
             pos.undo_move(pvMoves[i]);
