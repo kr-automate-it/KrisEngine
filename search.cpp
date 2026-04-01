@@ -228,10 +228,12 @@ static int quiescence(Position& pos, int alpha, int beta, SearchInfo& info, int 
 
         if (!inCheck) {
             Piece cap = pos.piece_on(move_to(m));
+            // Delta pruning: jesli nawet bicie figury nie podniesie nas do alpha
             if (cap != NO_PIECE && stand_pat + PieceValue[type_of(cap)] + 250 < alpha
                 && move_type(m) != PROMOTION)
                 continue;
-            if (scores[i] < -100)
+            // SEE pruning: odrzuc bicia z negatywna wymiana
+            if (pos.see(m) < 0)
                 continue;
         }
 
@@ -448,8 +450,11 @@ static int alpha_beta(Position& pos, int depth, int alpha, int beta,
     }
 
     // === Internal Iterative Deepening (IID) ===
-    if (pvNode && ttMove == MOVE_NONE && depth >= 6) {
-        alpha_beta(pos, depth / 2, alpha, beta, info, ply, false, prevMove);
+    // Rozszerzony na non-PV nodes — brak TT move na duzej glebokosci
+    // oznacza ze szukamy slepo. Plytki search da nam dobry ruch na start.
+    if (ttMove == MOVE_NONE && depth >= 6) {
+        int iidDepth = pvNode ? depth / 2 : depth / 3;
+        alpha_beta(pos, iidDepth, alpha, beta, info, ply, false, prevMove);
         if (info.stopped.load(std::memory_order_relaxed)) return 0;
         bool iidHit;
         TTEntry* iidEntry = TT.probe(pos.key(), iidHit);
@@ -572,7 +577,7 @@ static int alpha_beta(Position& pos, int depth, int alpha, int beta,
         // === Late Move Pruning (LMP) ===
         // LMP: wiecej ruchow sprawdzamy gdy pozycja sie poprawia
         int lmpThreshold = params.lmpBase + depth * depth + (improving ? depth : 0);
-        if (!pvNode && !inCheck && isQuiet && depth <= 5 && legalMoves > lmpThreshold)
+        if (!pvNode && !inCheck && isQuiet && depth <= 7 && legalMoves > lmpThreshold)
             continue;
 
         // === History Pruning ===
@@ -658,16 +663,24 @@ static int alpha_beta(Position& pos, int depth, int alpha, int beta,
                         reduction--;
                     if (m == counterMove)
                         reduction--;
-                    // History korekta — ciagle skalowanie zamiast progowego
+                    // History + cmHistory korekta — oba wplywaja na redukcje
                     int hist = history[us][move_from(m)][move_to(m)];
-                    reduction -= std::max(-2, std::min(2, hist / 5000));
+                    int cmHist = get_cm_history(prevPc, prevTo, m);
+                    int totalHist = hist + cmHist;
+                    reduction -= std::max(-3, std::min(3, totalHist / 4000));
+                    // Bardzo pozne ruchy (>12) — extra redukcja
+                    if (legalMoves > 12) reduction++;
                 } else if (isCapture) {
-                    // LMR dla bic z negatywnym SEE
+                    // LMR dla bic: capture history wplywa na redukcje
                     if (capPiece != NO_PIECE && movPiece != NO_PIECE) {
                         int capV = PieceValue[type_of(capPiece)];
                         int movV = PieceValue[type_of(movPiece)];
                         if (movV > capV + 100)
-                            reduction = 1; // lekka redukcja prawdopodobnie zlego bicia
+                            reduction = 1;
+                        // Capture history: zle bicia redukowane mocniej
+                        int capHist = captureHistory[movPiece][move_to(m)][type_of(capPiece)];
+                        if (capHist < -500)
+                            reduction++;
                     }
                 }
                 reduction = std::max(0, std::min(reduction, depth - 2));
