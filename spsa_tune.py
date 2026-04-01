@@ -34,43 +34,6 @@ class TuneParam:
     delta: float  # c_k w SPSA — perturbacja
 
 PARAMS = [
-    # Mobilnosc
-    TuneParam("knightMobMG",  4,  0, 10, 1.0),
-    TuneParam("knightMobEG",  3,  0, 10, 1.0),
-    TuneParam("bishopMobMG",  5,  0, 10, 1.0),
-    TuneParam("bishopMobEG",  4,  0, 10, 1.0),
-    TuneParam("rookMobMG",    2,  0, 10, 0.5),
-    TuneParam("rookMobEG",    3,  0, 10, 0.5),
-    TuneParam("queenMobMG",   1,  0,  5, 0.5),
-    TuneParam("queenMobEG",   1,  0,  5, 0.5),
-
-    # Passed pawns
-    TuneParam("passedPawnScale", 100, 50, 200, 10),
-
-    # Bishop pair
-    TuneParam("bishopPairMG", 30,  0, 80, 5),
-    TuneParam("bishopPairEG", 50,  0, 100, 5),
-
-    # Pawn structure
-    TuneParam("isolatedPawnMG", 10, 0, 30, 3),
-    TuneParam("isolatedPawnEG", 15, 0, 30, 3),
-    TuneParam("doubledPawnMG",   5, 0, 20, 2),
-    TuneParam("doubledPawnEG",  10, 0, 20, 2),
-
-    # Knight outpost
-    TuneParam("knightOutpostMG", 25, 0, 50, 5),
-    TuneParam("knightOutpostEG", 15, 0, 30, 5),
-
-    # Rook
-    TuneParam("rookOpenFileMG",  20, 0, 40, 5),
-    TuneParam("rookOpenFileEG",  15, 0, 30, 5),
-    TuneParam("rook7thRankMG",   20, 0, 40, 5),
-    TuneParam("rook7thRankEG",   30, 0, 50, 5),
-
-    # Tempo
-    TuneParam("tempoMG", 15, 0, 30, 3),
-    TuneParam("tempoEG",  5, 0, 15, 2),
-
     # Search
     TuneParam("aspirationWindow",      25, 10, 100, 5),
     TuneParam("nullMoveBaseR",          3,  2,   5, 0.5),

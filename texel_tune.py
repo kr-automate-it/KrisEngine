@@ -55,12 +55,6 @@ PARAMS = [
     ("rook7thRankEG",   30, 0, 50, 5),
     ("tempoMG", 15, 0, 30, 2),
     ("tempoEG",  5, 0, 15, 2),
-    ("aspirationWindow",      25, 10, 100, 5),
-    ("futilityMargin",       200, 50, 400, 15),
-    ("reverseFutilityMargin",120, 50, 250, 10),
-    ("razorMarginBase",      300,100, 500, 20),
-    ("razorMarginPerDepth",  200, 50, 400, 15),
-    ("lmpBase",                3,  1,   8, 1),
 ]
 
 
