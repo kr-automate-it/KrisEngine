@@ -952,13 +952,13 @@ SearchResult search(Position& pos, SearchInfo& info) {
             prevBestMove = result.bestMove;
             prevScore = score;
 
-            // Easy move: ruch stabilny od 8+ iteracji i depth >= 12 — oszczedz czas
-            if (stabilityCount >= 8 && depth >= 12 && elapsed > info.timeLimit * 0.3) {
+            // Easy move: ruch stabilny od 10+ iteracji i depth >= 14 — oszczedz czas
+            if (stabilityCount >= 10 && depth >= 14 && elapsed > info.timeLimit * 0.35) {
                 break;
             }
 
-            // Early stop: ruch stabilny od 5+ iteracji i zuzylismy >55% czasu
-            if (stabilityCount >= 5 && elapsed > info.timeLimit * 0.55) {
+            // Early stop: ruch stabilny od 6+ iteracji i zuzylismy >65% czasu
+            if (stabilityCount >= 6 && elapsed > info.timeLimit * 0.65) {
                 break;
             }
 
