@@ -299,8 +299,41 @@ int evaluate(const Position& pos) {
                     }
                 }
             }
+
+            // Overextended pawn: wysuniety pion (rank >= 5) bez wsparcia sasiadow
+            // i nie jest passed — to slaby cel do ataku
+            if (r >= 5 && !passed && !isolated) {
+                // Sprawdz czy ma wsparcie: nasz pion na sasiednich kolumnach w poblizu
+                U64 behindOrLevel;
+                if (c == WHITE) behindOrLevel = (1ULL << ((rank_of(s) + 1) * 8)) - 1;
+                else { int rr = rank_of(s); behindOrLevel = ~((1ULL << (rr * 8)) - 1); }
+                U64 supporters = ourPawns & adjFiles & behindOrLevel;
+                if (!supporters) {
+                    // Pion wysuniety bez wsparcia — kara rosnaca z rankiem
+                    pawnMG -= sign * (r - 4) * 8;  // rank5: -8, rank6: -16
+                    pawnEG -= sign * (r - 4) * 12; // rank5: -12, rank6: -24
+                }
+            }
         }
     }
+    // Pawn islands: im wiecej oddzielnych grup pionkow, tym slabsza struktura
+    for (Color c : {WHITE, BLACK}) {
+        int sign = (c == WHITE) ? 1 : -1;
+        U64 pawns = pos.pieces(c, PAWN);
+        int islands = 0;
+        bool prevFile = false;
+        for (int f = 0; f < 8; f++) {
+            bool hasFile = (pawns & (FileA_BB << f)) != 0;
+            if (hasFile && !prevFile) islands++;
+            prevFile = hasFile;
+        }
+        // Kara za kazda wyspy ponad 1 (1 wyspa = ok, 2 = mala kara, 3+ = duza)
+        if (islands > 1) {
+            pawnMG -= sign * (islands - 1) * 6;
+            pawnEG -= sign * (islands - 1) * 10;
+        }
+    }
+
     pawnTable.store(pos.pawn_key(), pawnMG, pawnEG, passedBB[WHITE], passedBB[BLACK]);
     mg += pawnMG;
     eg += pawnEG;
