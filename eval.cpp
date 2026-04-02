@@ -692,18 +692,24 @@ int evaluate(const Position& pos) {
         mg -= sign * popcount(hanging) * 15;
         eg -= sign * popcount(hanging) * 20;
 
-        // 5. Figury atakowane przez wrogiego krola — duza kara
-        // Krol moze brac bezkarnie jesli nasza obrona to tylko daleko stojaca figura
+        // 5. Figury atakowane przez wrogiego krola — uzyj SEE
+        // Krol bierze figure, ale "obrona" moze byc iluzoryczna (nie bijemy krola)
+        // SEE poprawnie to rozwiazuje.
         Square theirKsq2 = (them == WHITE) ? kingWh : kingBl;
         U64 kingAtt = KingAttacks[theirKsq2];
         U64 ourPiecesNoPawn = pos.pieces(c) & ~pos.pieces(c, PAWN) & ~pos.pieces(c, KING);
         U64 threatenedByKing = ourPiecesNoPawn & kingAtt;
-        // Dla kazdej figury atakowanej przez krola: sprawdz czy jest broniona przez pionka
-        // Jesli nie — kara (krol moze brac bo nasza "obrona" to figury ktore same beda narazone)
-        U64 safeFromKing = threatenedByKing & pawnAtt[c]; // bronione pionkiem = ok
-        U64 unsafeFromKing = threatenedByKing & ~safeFromKing;
-        mg -= sign * popcount(unsafeFromKing) * 40;
-        eg -= sign * popcount(unsafeFromKing) * 60;
+        while (threatenedByKing) {
+            Square s = pop_lsb(threatenedByKing);
+            // Stwórz ruch króla biorącego tę figurę
+            Move captureMove = make_move(theirKsq2, s, NORMAL);
+            int seeVal = pos.see(captureMove);
+            if (seeVal > 0) {
+                // SEE potwierdza: krol moze brac z zyskiem
+                mg -= sign * std::min(seeVal, 300) * 15 / 100;
+                eg -= sign * std::min(seeVal, 500) * 25 / 100;
+            }
+        }
     }
 
     // === Knight outposts ===
