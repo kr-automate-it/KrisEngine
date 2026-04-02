@@ -22,7 +22,7 @@ public:
     void clear();
 
 private:
-    static constexpr int SIZE = 16384; // 16K wpisow, malo pamieci
+    static constexpr int SIZE = 262144; // 256K wpisow (~8MB)
     PawnEntry* table;
 };
 

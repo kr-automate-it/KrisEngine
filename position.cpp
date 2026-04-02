@@ -127,6 +127,9 @@ void Position::set(const std::string& fen) {
         st->psqEG += sign * PSQ_EG[p][s];
         st->gamePhase += PhaseValue[type_of(p)];
     }
+
+    // Cache in_check
+    st->inCheck = compute_in_check();
 }
 
 std::string Position::fen() const {
@@ -176,7 +179,7 @@ U64 Position::attackers_to(Square s, U64 occupied) const {
          | (KingAttacks[s]       & pieces(KING));
 }
 
-bool Position::in_check() const {
+bool Position::compute_in_check() const {
     return attackers_to(king_square(sideToMove)) & pieces(~sideToMove);
 }
 
@@ -302,6 +305,7 @@ void Position::do_move(Move m, StateInfo& newSt) {
 
     st = &newSt;
     sideToMove = ~sideToMove;
+    st->inCheck = compute_in_check();
 }
 
 void Position::undo_move(Move m) {
@@ -457,6 +461,7 @@ void Position::do_null_move(StateInfo& newSt) {
 
     st = &newSt;
     sideToMove = ~sideToMove;
+    st->inCheck = false; // null move nigdy nie daje szacha
 }
 
 void Position::undo_null_move() {

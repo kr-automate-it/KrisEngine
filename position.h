@@ -16,6 +16,7 @@ struct StateInfo {
     int           psqEG;       // incremental: material + PST endgame score (white perspective)
     int           gamePhase;   // incremental: game phase counter
     int           staticEval;  // eval zapisany w search (do improving heuristic)
+    bool          inCheck;     // cached: czy strona do ruchu jest w szachu
     StateInfo*    previous;
 };
 
@@ -79,7 +80,8 @@ public:
 
     U64 attackers_to(Square s, U64 occupied) const;
     U64 attackers_to(Square s) const { return attackers_to(s, pieces()); }
-    bool in_check() const;
+    bool in_check() const { return st->inCheck; }
+    bool compute_in_check() const;
     bool is_legal(Move m) const;
 
     // SEE: wynik wymiany na polu docelowym (>0 = korzystna, <0 = niekorzystna)

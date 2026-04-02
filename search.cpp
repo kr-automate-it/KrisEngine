@@ -635,13 +635,12 @@ static int alpha_beta(Position& pos, int depth, int alpha, int beta,
 
         // Extensions: givesCheck + singular + recapture + passed pawn push
         int ext = 0;
-        // Check extension: rozszerzaj wszystkie szachy w pierwszych 5 ruchach
-        // i wazne szachy (TT, jedyny, early) dalej
+        // Check extension: tylko najwazniejsze szachy
         if (givesCheck && ply < 80) {
-            if (legalMoves <= 5 || m == ttMove)
-                ext = 1;
-            else if (depth >= 6)
-                ext = 1; // na duzym depth szachy sa wazne
+            if (legalMoves == 1)
+                ext = 1; // jedyny legalny ruch — musi byc zbadany
+            else if (m == ttMove && depth >= 6)
+                ext = 1; // TT move dajacy szach na duzym depth
         }
         // Singular extension
         if (m == ttMove && singularExt > 0 && ext == 0)

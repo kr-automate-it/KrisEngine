@@ -211,23 +211,22 @@ int evaluate(const Position& pos) {
     int eg = pos.psq_eg();
     int phase = pos.game_phase();
 
-    // #8: Cache king squares i piece counts na poczatku
+    // Cache bitboardow — unikamy wielokrotnych wywolan pos.pieces()
+    U64 occ = pos.pieces();
+    U64 wPawns = pos.pieces(WHITE, PAWN), bPawns = pos.pieces(BLACK, PAWN);
+    U64 wKnights = pos.pieces(WHITE, KNIGHT), bKnights = pos.pieces(BLACK, KNIGHT);
+    U64 wBishops = pos.pieces(WHITE, BISHOP), bBishops = pos.pieces(BLACK, BISHOP);
+    U64 wRooks = pos.pieces(WHITE, ROOK), bRooks = pos.pieces(BLACK, ROOK);
+    U64 wQueens = pos.pieces(WHITE, QUEEN), bQueens = pos.pieces(BLACK, QUEEN);
+
     Square kingWh = pos.king_square(WHITE);
     Square kingBl = pos.king_square(BLACK);
-    int numBishops[COLOR_NB] = {
-        popcount(pos.pieces(WHITE, BISHOP)),
-        popcount(pos.pieces(BLACK, BISHOP))
-    };
-    int numKnights[COLOR_NB] = {
-        popcount(pos.pieces(WHITE, KNIGHT)),
-        popcount(pos.pieces(BLACK, KNIGHT))
-    };
+    int numBishops[COLOR_NB] = { popcount(wBishops), popcount(bBishops) };
+    int numKnights[COLOR_NB] = { popcount(wKnights), popcount(bKnights) };
 
     // #7: Bishop pair — uzyj cached counts
     if (numBishops[WHITE] >= 2) { mg += params.bishopPairMG; eg += params.bishopPairEG; }
     if (numBishops[BLACK] >= 2) { mg -= params.bishopPairMG; eg -= params.bishopPairEG; }
-
-    U64 occ = pos.pieces();
 
     // === Struktura pionkow (z pawn hash cache) ===
     // Passed pawns bitboard — uzywany ponizej w bonusach zaleznych od figur
@@ -359,7 +358,7 @@ int evaluate(const Position& pos) {
             else { int rr = rank_of(s); frontMask = (rr > 0) ? (1ULL << (rr * 8)) - 1 : 0; }
 
             U64 pathToPromo = fileMask & frontMask;
-            bool freePath = !(pos.pieces() & pathToPromo);
+            bool freePath = !(occ & pathToPromo);
 
             // Aggressive free path bonus — rośnie eksponencjalnie z rankiem
             if (freePath) {
