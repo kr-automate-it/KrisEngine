@@ -294,7 +294,7 @@ int evaluate(const Position& pos) {
                         U64 theirPawnAtt = (c == WHITE)
                             ? ((theirPawns >> 9) & ~FileH_BB) | ((theirPawns >> 7) & ~FileA_BB)
                             : ((theirPawns << 7) & ~FileH_BB) | ((theirPawns << 9) & ~FileA_BB);
-                        if (theirPawnAtt & square_bb(stopSq)) { pawnMG -= sign * 8; pawnEG -= sign * 12; }
+                        if (theirPawnAtt & square_bb(stopSq)) { pawnMG -= sign * params.backwardPawnMG; pawnEG -= sign * params.backwardPawnEG; }
                     }
                 }
             }
@@ -684,8 +684,8 @@ int evaluate(const Position& pos) {
 
         // 4. Hanging pieces: nasze figury atakowane i nie bronione
         U64 hanging = (ourAll & allAttacks[them]) & ~(ourAll & allAttacks[c]) & ~pos.pieces(c, PAWN);
-        mg -= sign * popcount(hanging) * 15;
-        eg -= sign * popcount(hanging) * 20;
+        mg -= sign * popcount(hanging) * params.hangingPieceMG;
+        eg -= sign * popcount(hanging) * params.hangingPieceEG;
 
         // 5. Figury atakowane przez wrogiego krola i nie bronione pionkiem
         // Szybkie sprawdzenie bez SEE (SEE za wolne w eval)
@@ -742,8 +742,8 @@ int evaluate(const Position& pos) {
         int sign = (c == WHITE) ? 1 : -1;
         U64 pawns = pos.pieces(c, PAWN);
         U64 connected = pawns & ((pawns << 1) & ~FileA_BB | (pawns >> 1) & ~FileH_BB);
-        mg += sign * popcount(connected) * 5;
-        eg += sign * popcount(connected) * 8;
+        mg += sign * popcount(connected) * params.connectedPawnMG;
+        eg += sign * popcount(connected) * params.connectedPawnEG;
     }
 
     // === Bad bishop ===
@@ -764,8 +764,8 @@ int evaluate(const Position& pos) {
             U64 sameColorPawns = ourPawns & (onLight ? LightSquares : DarkSquares);
             int blocked = popcount(sameColorPawns);
             // Kara: 4cp MG, 6cp EG za kazdy pionek blokujacy gonca
-            mg -= sign * blocked * 4;
-            eg -= sign * blocked * 6;
+            mg -= sign * blocked * params.badBishopMG;
+            eg -= sign * blocked * params.badBishopEG;
         }
     }
 
@@ -914,7 +914,7 @@ int evaluate(const Position& pos) {
             int kr = rank_of(ksq);
             int distFromCenter = std::max(std::abs(kf - 3), std::abs(kr - 3)); // 0=centrum, 3=rog
             // Max bonus: 30cp w centrum, 0 na brzegu, -15 w rogu
-            int bonus = (3 - distFromCenter) * 10;
+            int bonus = (3 - distFromCenter) * params.kingCentralEG;
             eg += sign * bonus * egWeight / TotalPhase;
         }
     }

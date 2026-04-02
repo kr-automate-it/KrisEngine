@@ -20,7 +20,7 @@ static void init_lmr() {
             if (d == 0 || m == 0)
                 lmrTable[d][m] = 0;
             else
-                lmrTable[d][m] = (int)(0.5 + std::log(d) * std::log(m) / 2.25);
+                lmrTable[d][m] = (int)(0.5 + std::log(d) * std::log(m) * 100.0 / params.lmrDivisor);
         }
 }
 
@@ -229,7 +229,7 @@ static int quiescence(Position& pos, int alpha, int beta, SearchInfo& info, int 
         if (!inCheck) {
             Piece cap = pos.piece_on(move_to(m));
             // Delta pruning: jesli nawet bicie figury nie podniesie nas do alpha
-            if (cap != NO_PIECE && stand_pat + PieceValue[type_of(cap)] + 250 < alpha
+            if (cap != NO_PIECE && stand_pat + PieceValue[type_of(cap)] + params.qsearchDelta < alpha
                 && move_type(m) != PROMOTION)
                 continue;
             // SEE pruning: odrzuc bicia z negatywna wymiana
@@ -424,7 +424,7 @@ static int alpha_beta(Position& pos, int depth, int alpha, int beta,
     // Jesli shallow search z podwyzszonym beta daje cutoff,
     // to pelny search tez prawdopodobnie da cutoff — odetnij wczesnie.
     if (!pvNode && !inCheck && depth >= 5 && std::abs(beta) < VALUE_MATE - 100) {
-        int probBeta = beta + 100;
+        int probBeta = beta + params.probCutMargin;
 
         MoveList probList;
         generate_captures(pos, probList);

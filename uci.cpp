@@ -50,6 +50,18 @@ static bool try_set_param(const std::string& name, int value) {
     if (name == "razorMarginBase") { params.razorMarginBase = value; return true; }
     if (name == "razorMarginPerDepth") { params.razorMarginPerDepth = value; return true; }
     if (name == "lmpBase") { params.lmpBase = value; return true; }
+    if (name == "lmrDivisor") { params.lmrDivisor = value; return true; }
+    if (name == "qsearchDelta") { params.qsearchDelta = value; return true; }
+    if (name == "probCutMargin") { params.probCutMargin = value; return true; }
+    if (name == "backwardPawnMG") { params.backwardPawnMG = value; return true; }
+    if (name == "backwardPawnEG") { params.backwardPawnEG = value; return true; }
+    if (name == "connectedPawnMG") { params.connectedPawnMG = value; return true; }
+    if (name == "connectedPawnEG") { params.connectedPawnEG = value; return true; }
+    if (name == "badBishopMG") { params.badBishopMG = value; return true; }
+    if (name == "badBishopEG") { params.badBishopEG = value; return true; }
+    if (name == "kingCentralEG") { params.kingCentralEG = value; return true; }
+    if (name == "hangingPieceMG") { params.hangingPieceMG = value; return true; }
+    if (name == "hangingPieceEG") { params.hangingPieceEG = value; return true; }
     return false;
 }
 
@@ -248,6 +260,18 @@ void uci_loop() {
             TUNE_PARAM(razorMarginBase, razorMarginBase, 100, 500)
             TUNE_PARAM(razorMarginPerDepth, razorMarginPerDepth, 50, 400)
             TUNE_PARAM(lmpBase, lmpBase, 1, 8)
+            TUNE_PARAM(lmrDivisor, lmrDivisor, 150, 350)
+            TUNE_PARAM(qsearchDelta, qsearchDelta, 100, 500)
+            TUNE_PARAM(probCutMargin, probCutMargin, 50, 200)
+            TUNE_PARAM(backwardPawnMG, backwardPawnMG, 0, 20)
+            TUNE_PARAM(backwardPawnEG, backwardPawnEG, 0, 25)
+            TUNE_PARAM(connectedPawnMG, connectedPawnMG, 0, 15)
+            TUNE_PARAM(connectedPawnEG, connectedPawnEG, 0, 20)
+            TUNE_PARAM(badBishopMG, badBishopMG, 0, 12)
+            TUNE_PARAM(badBishopEG, badBishopEG, 0, 15)
+            TUNE_PARAM(kingCentralEG, kingCentralEG, 0, 25)
+            TUNE_PARAM(hangingPieceMG, hangingPieceMG, 0, 40)
+            TUNE_PARAM(hangingPieceEG, hangingPieceEG, 0, 50)
             std::cout << "uciok" << std::endl;
         }
         else if (token == "setoption") {

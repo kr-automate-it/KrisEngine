@@ -73,6 +73,9 @@ SEARCH_PARAM_NAMES = [
     "razorMarginBase",
     "razorMarginPerDepth",
     "lmpBase",
+    "lmrDivisor",
+    "qsearchDelta",
+    "probCutMargin",
 ]
 
 
