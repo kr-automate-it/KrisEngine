@@ -210,11 +210,16 @@ def texel_tune(engine_path, positions, iterations=5, depth=1):
     base_error = mse(base_evals, results, K)
     print(f"Baseline MSE: {base_error:.6f}\n")
 
+    import random as _rnd
     for it in range(iterations):
         improved = False
         print(f"--- Iteracja {it+1}/{iterations} (MSE = {base_error:.6f}) ---")
 
-        for name, default, lo, hi, step in PARAMS:
+        # Losowa kolejnosc parametrow — eliminuje bias
+        param_order = list(PARAMS)
+        _rnd.shuffle(param_order)
+
+        for name, default, lo, hi, step in param_order:
             old_val = current[name]
             best_val = old_val
             best_err = base_error
@@ -232,6 +237,21 @@ def texel_tune(engine_path, positions, iterations=5, depth=1):
                     best_err = new_err
                     best_val = new_val
                     base_evals = new_evals
+
+                    # Kontynuuj w tym kierunku az przestanie sie poprawiac
+                    while True:
+                        next_val = best_val + direction
+                        if next_val < lo or next_val > hi:
+                            break
+                        current[name] = next_val
+                        next_evals = evaluate_positions(engine_path, positions, current, depth)
+                        next_err = mse(next_evals, results, K)
+                        if next_err < best_err:
+                            best_err = next_err
+                            best_val = next_val
+                            base_evals = next_evals
+                        else:
+                            break
 
             current[name] = best_val
             if best_val != old_val:

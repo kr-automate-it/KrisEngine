@@ -105,16 +105,33 @@ def make_options(params: list[TuneParam], perturbation: list[int] | None = None)
     return opts
 
 
+OPENINGS = [
+    "",  # startpos
+    "e2e4 e7e5", "d2d4 d7d5", "e2e4 c7c5", "d2d4 g8f6 c2c4 g7g6",
+    "e2e4 e7e6", "g1f3 d7d5 c2c4", "e2e4 c7c6", "d2d4 d7d5 c2c4 e7e6",
+    "e2e4 d7d6", "g1f3 g8f6 c2c4 e7e6",
+]
+
+
 def play_game(engine_path: str, opts_white: dict, opts_black: dict,
-              tc_ms: int = 5000, inc_ms: int = 50, hash_mb: int = 32) -> float:
+              tc_ms: int = 5000, inc_ms: int = 50, hash_mb: int = 32,
+              white_engine=None, black_engine=None) -> float:
     """
     Rozegraj 1 partie miedzy dwiema konfiguracjami silnika.
     Zwraca wynik z perspektywy WHITE: 1.0 / 0.5 / 0.0
     """
+    # Losowe otwarcie — redukuje szum
+    opening = random.choice(OPENINGS)
     board = chess.Board()
+    for uci_move in opening.split():
+        if uci_move:
+            board.push_uci(uci_move)
 
-    white = chess.engine.SimpleEngine.popen_uci(engine_path)
-    black = chess.engine.SimpleEngine.popen_uci(engine_path)
+    # Uzyj istniejacych silnikow lub stworz nowe
+    own_white = white_engine is None
+    own_black = black_engine is None
+    white = white_engine or chess.engine.SimpleEngine.popen_uci(engine_path)
+    black = black_engine or chess.engine.SimpleEngine.popen_uci(engine_path)
 
     # Ustaw opcje
     white.configure({"Hash": hash_mb, "OwnBook": False, **opts_white})
@@ -126,17 +143,16 @@ def play_game(engine_path: str, opts_white: dict, opts_black: dict,
     try:
         while not board.is_game_over(claim_draw=True):
             if board.fullmove_number > 200:
-                white.quit()
-                black.quit()
-                return 0.5  # za dluga partia = remis
+                if own_white: white.quit()
+                if own_black: black.quit()
+                return 0.5
 
             engine = white if board.turn == chess.WHITE else black
             t_left = wtime if board.turn == chess.WHITE else btime
 
             if t_left <= 0:
-                # Przegrana na czas
-                white.quit()
-                black.quit()
+                if own_white: white.quit()
+                if own_black: black.quit()
                 return 0.0 if board.turn == chess.WHITE else 1.0
 
             limit = chess.engine.Limit(
@@ -155,8 +171,7 @@ def play_game(engine_path: str, opts_white: dict, opts_black: dict,
 
             board.push(result.move)
 
-            # Aktualizuj zegar
-            if board.turn == chess.BLACK:  # bialy dopiero zagral
+            if board.turn == chess.BLACK:
                 wtime -= elapsed_ms
                 wtime += inc_ms
             else:
@@ -165,14 +180,16 @@ def play_game(engine_path: str, opts_white: dict, opts_black: dict,
 
     except Exception as e:
         print(f"  [ERROR] Partia przerwana: {e}")
-        try: white.quit()
-        except: pass
-        try: black.quit()
-        except: pass
+        if own_white:
+            try: white.quit()
+            except: pass
+        if own_black:
+            try: black.quit()
+            except: pass
         return 0.5
 
-    white.quit()
-    black.quit()
+    if own_white: white.quit()
+    if own_black: black.quit()
 
     result_str = board.result(claim_draw=True)
     if result_str == "1-0":
