@@ -688,9 +688,22 @@ int evaluate(const Position& pos) {
         // 4. Hanging pieces: nasze figury atakowane i nie bronione
         U64 attacked = pos.pieces(c) & allAttacks[them];
         U64 defended = pos.pieces(c) & allAttacks[c];
-        U64 hanging = attacked & ~defended & ~pos.pieces(c, PAWN); // nie liczymy pionkow
+        U64 hanging = attacked & ~defended & ~pos.pieces(c, PAWN);
         mg -= sign * popcount(hanging) * 15;
         eg -= sign * popcount(hanging) * 20;
+
+        // 5. Figury atakowane przez wrogiego krola — duza kara
+        // Krol moze brac bezkarnie jesli nasza obrona to tylko daleko stojaca figura
+        Square theirKsq2 = (them == WHITE) ? kingWh : kingBl;
+        U64 kingAtt = KingAttacks[theirKsq2];
+        U64 ourPiecesNoPawn = pos.pieces(c) & ~pos.pieces(c, PAWN) & ~pos.pieces(c, KING);
+        U64 threatenedByKing = ourPiecesNoPawn & kingAtt;
+        // Dla kazdej figury atakowanej przez krola: sprawdz czy jest broniona przez pionka
+        // Jesli nie — kara (krol moze brac bo nasza "obrona" to figury ktore same beda narazone)
+        U64 safeFromKing = threatenedByKing & pawnAtt[c]; // bronione pionkiem = ok
+        U64 unsafeFromKing = threatenedByKing & ~safeFromKing;
+        mg -= sign * popcount(unsafeFromKing) * 40;
+        eg -= sign * popcount(unsafeFromKing) * 60;
     }
 
     // === Knight outposts ===

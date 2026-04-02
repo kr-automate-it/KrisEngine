@@ -374,11 +374,22 @@ static int alpha_beta(Position& pos, int depth, int alpha, int beta,
 
     // === Null Move Pruning ===
     // Wylaczony w koncowkach z niskim materialem (zugzwang risk)
+    // i gdy mamy figure atakowana przez wrogiego krola (en prise risk)
     if (doNull && !inCheck && !pvNode && depth >= 3 && eval >= beta) {
         U64 nonPawnMaterial = pos.pieces(pos.side_to_move())
             & ~pos.pieces(PAWN) & ~pos.pieces(KING);
-        // Minimum: wiecej niz 1 lekka figura (sam krol+pionki = zugzwang terytory)
-        if (popcount(nonPawnMaterial) >= 2) {
+        // Sprawdz en prise: nasza figura atakowana przez wrogiego krola (nie broniona pionkiem)
+        Color us = pos.side_to_move();
+        Color them = ~us;
+        U64 theirKingAtt = KingAttacks[pos.king_square(them)];
+        // Nasze pawn attacks (broniace nasze figury)
+        U64 ourPawns = pos.pieces(us, PAWN);
+        U64 ourPawnAtt = (us == WHITE)
+            ? ((ourPawns << 7) & ~FileH_BB) | ((ourPawns << 9) & ~FileA_BB)
+            : ((ourPawns >> 9) & ~FileH_BB) | ((ourPawns >> 7) & ~FileA_BB);
+        U64 enPrise = nonPawnMaterial & theirKingAtt & ~ourPawnAtt;
+        // Minimum: wiecej niz 1 lekka figura i brak en prise
+        if (popcount(nonPawnMaterial) >= 2 && !enPrise) {
             int R = params.nullMoveBaseR + depth / 4 + std::min((eval - beta) / 200, 3);
 
             StateInfo newSt;
