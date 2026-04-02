@@ -622,25 +622,29 @@ static int alpha_beta(Position& pos, int depth, int alpha, int beta,
         bool givesCheck = pos.in_check();
         int score;
 
-        // Extensions: givesCheck + singular + recapture
+        // Extensions: givesCheck + singular + recapture + passed pawn push
         int ext = 0;
-        // Check extension: TT move lub jedyny ruch
-        // Nie rozszerzaj kazdego szacha — tylko wazne (TT, jedyny, lub early move)
+        // Check extension: rozszerzaj wszystkie szachy w pierwszych 5 ruchach
+        // i wazne szachy (TT, jedyny, early) dalej
         if (givesCheck && ply < 80) {
-            if (legalMoves == 1 || m == ttMove)
+            if (legalMoves <= 5 || m == ttMove)
                 ext = 1;
-            else if (legalMoves <= 3 && !isCapture)
-                ext = 1; // wczesny cichy szach — warto zbadac
+            else if (depth >= 6)
+                ext = 1; // na duzym depth szachy sa wazne
         }
         // Singular extension
         if (m == ttMove && singularExt > 0 && ext == 0)
             ext = singularExt;
         // Recapture extension: bijemy na polu gdzie przeciwnik wlasnie bil
-        // Tylko gdy bita figura jest warta >= skoczka (unikamy pion-za-pion explosion)
         if (ext == 0 && isCapture && prevMove != MOVE_NONE
             && move_to(m) == move_to(prevMove) && ply < 80
             && capPiece != NO_PIECE && PieceValue[type_of(capPiece)] >= 300)
             ext = 1;
+        // Passed pawn push extension: pion na 6 lub 7 rankcie to potencjalna promocja
+        if (ext == 0 && type_of(movPiece) == PAWN && ply < 80) {
+            int pushRank = (us == WHITE) ? rank_of(move_to(m)) : 7 - rank_of(move_to(m));
+            if (pushRank >= 6) ext = 1;
+        }
 
         // === PVS + LMR ===
         if (legalMoves == 1) {
@@ -914,16 +918,20 @@ SearchResult search(Position& pos, SearchInfo& info) {
             } else {
                 stabilityCount = 0;
                 // Bestmove sie zmienil — mysl dluzej (pozycja niestabilna)
-                timeFactor = std::min(timeFactor + 0.4, 2.5);
+                // Wiecej czasu gdy zmiana nastepuje na wyzszym depth (ważniejsza)
+                double changeBonus = 0.4 + (depth >= 10 ? 0.3 : 0.0);
+                timeFactor = std::min(timeFactor + changeBonus, 3.0);
             }
 
-            // Eval spadl — klopoty, mysl dluzej
+            // Eval spadl — klopoty, mysl dluzej (skalowane przez wielkosc spadku)
             if (prevScore > -VALUE_MATE + 100) {
                 int drop = prevScore - score;
-                if (drop > 50)
-                    timeFactor = std::min(timeFactor + 0.4, 2.5);
-                else if (drop > 25)
-                    timeFactor = std::min(timeFactor + 0.2, 2.5);
+                if (drop > 80)
+                    timeFactor = std::min(timeFactor + 0.6, 3.0); // duzy spadek = panika
+                else if (drop > 40)
+                    timeFactor = std::min(timeFactor + 0.4, 3.0);
+                else if (drop > 20)
+                    timeFactor = std::min(timeFactor + 0.2, 3.0);
             }
 
             // Eval wzrosl znaczaco — mozemy oszczedzic czas

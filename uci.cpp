@@ -105,16 +105,27 @@ static void parse_go(std::istringstream& is) {
             searchInfo.timeLimit = timeLeft / movesLeft + inc * 3 / 4;
         }
 
-        // Bonus czasu w krytycznych pozycjach (szach, duzo figur w centrum)
+        // Bonus czasu w krytycznych pozycjach
         if (pos.in_check()) {
             searchInfo.timeLimit = searchInfo.timeLimit * 3 / 2; // +50% gdy w szachu
+        }
+
+        // Pozycja taktyczna: duzo bic dostepnych = wiecej czasu
+        {
+            MoveList capList;
+            generate_captures(pos, capList);
+            int legalCaps = 0;
+            for (int i = 0; i < capList.count; i++)
+                if (pos.is_legal(capList.moves[i])) legalCaps++;
+            if (legalCaps >= 4)
+                searchInfo.timeLimit = searchInfo.timeLimit * 5 / 4; // +25% taktyczna
         }
 
         // Safety margins
         if (searchInfo.timeLimit < 10)
             searchInfo.timeLimit = 10;
-        // Nigdy nie uzywaj wiecej niz 40% pozostalego czasu
-        int64_t maxTime = (int64_t)timeLeft * 2 / 5;
+        // Nigdy nie uzywaj wiecej niz 50% pozostalego czasu (bylo 40%)
+        int64_t maxTime = (int64_t)timeLeft / 2;
         if (searchInfo.timeLimit > maxTime)
             searchInfo.timeLimit = std::max((int64_t)10, maxTime);
         // Zostawaj bufor 50ms na komunikacje
