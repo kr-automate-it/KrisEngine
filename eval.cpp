@@ -333,6 +333,35 @@ int evaluate(const Position& pos) {
         }
     }
 
+    // === Candidate passed pawns ===
+    // Pion ktory moze stac sie passed po wymianie (wiekszosc na skrzydle)
+    for (Color c : {WHITE, BLACK}) {
+        int sign = (c == WHITE) ? 1 : -1;
+        Color them = ~c;
+        U64 ourPawns   = pos.pieces(c, PAWN);
+        U64 theirPawns = pos.pieces(them, PAWN);
+
+        U64 pawns = ourPawns & ~passedBB[c]; // nie-passed pionki
+        while (pawns) {
+            Square s = pop_lsb(pawns);
+            int f = file_of(s);
+            int r = (c == WHITE) ? rank_of(s) : 7 - rank_of(s);
+            if (r < 3 || r > 5) continue; // tylko srodkowe ranki
+
+            U64 fileMask = FileA_BB << f;
+            U64 adjFiles = (f > 0 ? FileA_BB << (f-1) : 0) | (f < 7 ? FileA_BB << (f+1) : 0);
+
+            // Policz nasze i ich pionki na tym i sasiednich kolumnach
+            int ourCount = popcount(ourPawns & (fileMask | adjFiles));
+            int theirCount = popcount(theirPawns & (fileMask | adjFiles));
+
+            // Jesli mamy wiekszosc lokalna — to kandydat na passera
+            if (ourCount > theirCount) {
+                pawnEG += sign * (r - 2) * 5; // rank3=5, rank4=10, rank5=15
+            }
+        }
+    }
+
     pawnTable.store(pos.pawn_key(), pawnMG, pawnEG, passedBB[WHITE], passedBB[BLACK]);
     mg += pawnMG;
     eg += pawnEG;
@@ -644,17 +673,49 @@ int evaluate(const Position& pos) {
         // King tropism: bonus w midgame za figury blisko wrogiego krola
         mg += sign * tropismMG / 4;
 
+        // === Safe checks ===
+        // Bonus za figury ktore moga dac szach bez bycia bitymi.
+        // Safe = pole szachowe nie jest bronione przez wrogi pionek ani figury
+        {
+            U64 enemySafe = ~allAttacks[them]; // pola nie bronione przez przeciwnika
+            Square ksq = theirKsq;
+
+            // Szachy skoczkiem
+            U64 knightChecks = KnightAttacks[ksq] & allAttacks[c] & enemySafe & ~pos.pieces(c);
+            attackUnits += popcount(knightChecks) * 3;
+
+            // Szachy gońcem
+            U64 bishopChecks = bishop_attacks(ksq, occ) & allAttacks[c] & enemySafe & ~pos.pieces(c);
+            attackUnits += popcount(bishopChecks) * 2;
+
+            // Szachy wieżą
+            U64 rookChecks = rook_attacks(ksq, occ) & allAttacks[c] & enemySafe & ~pos.pieces(c);
+            attackUnits += popcount(rookChecks) * 3;
+
+            // Szachy hetmanem
+            U64 queenChecks = queen_attacks(ksq, occ) & allAttacks[c] & enemySafe & ~pos.pieces(c);
+            attackUnits += popcount(queenChecks) * 1; // mniejsza waga bo hetman i tak juz liczy sie w attack units
+        }
+
+        // === Weak squares around king ===
+        // Pola wokol krola nie bronione przez wrogi pionek = slabosci
+        {
+            U64 kingRing = KingAttacks[theirKsq];
+            U64 weakSquares = kingRing & ~pawnAtt[them];
+            int weakCount = popcount(weakSquares);
+            // Im wiecej slabych pol, tym gorzej — dodaj do attack units
+            attackUnits += weakCount;
+        }
+
         // === King safety — finalny wynik z attack units ===
         // Kara stosowana tylko gdy co najmniej 2 figury atakuja
         if (attackerCount >= 2) {
-            // Skaluj attackUnits przez ilosc atakujacych figur
             attackUnits = attackUnits * (attackerCount - 1) / 2;
             if (attackUnits < 0) attackUnits = 0;
             if (attackUnits > 99) attackUnits = 99;
             int penalty = SafetyTable[attackUnits];
-            // Kara dla PRZECIWNIKA (my atakujemy jego krola = dobrze dla nas)
             mg += sign * penalty;
-            eg += sign * (penalty * 3 / 10); // 30% komponent w EG
+            eg += sign * (penalty * 3 / 10);
         }
     }
 
@@ -803,6 +864,43 @@ int evaluate(const Position& pos) {
                     mg += sign * 8;
                     eg += sign * 12;
                 }
+            }
+        }
+    }
+
+    // === Trapped pieces ===
+    // Goniec na a7/h7/a2/h2 zablokowany wrogim pionkiem = uwieziony
+    for (Color c : {WHITE, BLACK}) {
+        int sign = (c == WHITE) ? 1 : -1;
+        Color them = ~c;
+        U64 bishops = pos.pieces(c, BISHOP);
+        // Goniec na rogu 7-go rzedu zablokowany pionkiem
+        Square traps[] = {
+            (c == WHITE) ? SQ_A7 : SQ_A2,
+            (c == WHITE) ? SQ_H7 : SQ_H2,
+        };
+        Square blockers[] = {
+            (c == WHITE) ? SQ_B6 : SQ_B3,
+            (c == WHITE) ? SQ_G6 : SQ_G3,
+        };
+        for (int i = 0; i < 2; i++) {
+            if ((bishops & square_bb(traps[i])) && (pos.pieces(them, PAWN) & square_bb(blockers[i]))) {
+                mg -= sign * 50;
+                eg -= sign * 50;
+            }
+        }
+
+        // Wieza w rogu bez roszady (krol na f1/g1 blokuje wieze h1)
+        U64 rooks = pos.pieces(c, ROOK);
+        Square ksq = (c == WHITE) ? kingWh : kingBl;
+        int kf = file_of(ksq);
+        if (kf >= 5) { // krol na f/g/h
+            if (rooks & square_bb((c == WHITE) ? SQ_H1 : SQ_H8)) {
+                mg -= sign * 40;
+            }
+        } else if (kf <= 2) { // krol na a/b/c
+            if (rooks & square_bb((c == WHITE) ? SQ_A1 : SQ_A8)) {
+                mg -= sign * 40;
             }
         }
     }
