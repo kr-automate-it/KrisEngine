@@ -318,7 +318,7 @@ int evaluate(const Position& pos) {
             Square s = pop_lsb(passed);
             int f = file_of(s);
             int r = (c == WHITE) ? rank_of(s) : 7 - rank_of(s);
-            if (r < 3) continue;
+            if (r < 2) continue;
 
             U64 fileMask = FileA_BB << f;
             U64 frontMask;
@@ -328,28 +328,38 @@ int evaluate(const Position& pos) {
             U64 pathToPromo = fileMask & frontMask;
             bool freePath = !(pos.pieces() & pathToPromo);
 
+            // Aggressive free path bonus — rośnie eksponencjalnie z rankiem
             if (freePath) {
-                static const int freePathBonus[] = {0, 0, 0, 20, 40, 80, 160, 0};
+                static const int freePathBonus[] = {0, 0, 10, 25, 50, 100, 200, 350};
                 eg += sign * freePathBonus[r];
             }
 
             // Blocked
             Square stopSq = (c == WHITE) ? Square(s + 8) : Square(s - 8);
             if (stopSq >= SQ_A1 && stopSq <= SQ_H8 && pos.piece_on(stopSq) != NO_PIECE) {
-                static const int blockedPenalty[] = {0, 0, 0, 5, 10, 20, 40, 0};
+                static const int blockedPenalty[] = {0, 0, 3, 8, 15, 30, 50, 0};
                 eg -= sign * blockedPenalty[r];
             }
 
-            // Rook behind
+            // Rook behind passed pawn (obie strony)
             U64 behindMask = fileMask & ~frontMask & ~square_bb(s);
-            if (pos.pieces(c, ROOK) & behindMask) { mg += sign * 10; eg += sign * 25; }
-            if (pos.pieces(them, ROOK) & behindMask) { mg -= sign * 10; eg -= sign * 25; }
+            if (pos.pieces(c, ROOK) & behindMask) { mg += sign * 10; eg += sign * 30; }
+            if (pos.pieces(them, ROOK) & behindMask) { mg -= sign * 10; eg -= sign * 30; }
 
-            // King proximity
+            // Rook in front of enemy passed pawn — blokuje
+            if (pos.pieces(them, ROOK) & pathToPromo) { eg += sign * 15; }
+
+            // King proximity do passed pawn (nie do pola promocji — do samego pionka)
             Square promoSq = (c == WHITE) ? make_square(f, 7) : make_square(f, 0);
-            int ourDist  = std::max(std::abs(file_of(ourKing) - f), std::abs(rank_of(ourKing) - rank_of(promoSq)));
-            int theirDist = std::max(std::abs(file_of(theirKing) - f), std::abs(rank_of(theirKing) - rank_of(promoSq)));
-            eg += sign * (theirDist - ourDist) * 8;
+            int ourDistPawn  = std::max(std::abs(file_of(ourKing) - f), std::abs(rank_of(ourKing) - rank_of(s)));
+            int theirDistPawn = std::max(std::abs(file_of(theirKing) - f), std::abs(rank_of(theirKing) - rank_of(s)));
+            // Bonus za bliskosc naszego krola, kara za bliskosc wrogiego
+            eg += sign * (theirDistPawn - ourDistPawn) * 5;
+
+            // King proximity do pola promocji (oddzielnie, wazniejsze na wysokich rankach)
+            int ourDistPromo  = std::max(std::abs(file_of(ourKing) - f), std::abs(rank_of(ourKing) - rank_of(promoSq)));
+            int theirDistPromo = std::max(std::abs(file_of(theirKing) - f), std::abs(rank_of(theirKing) - rank_of(promoSq)));
+            eg += sign * (theirDistPromo - ourDistPromo) * (r >= 5 ? 12 : 6);
 
             // Rule of the square
             if (freePath) {
@@ -359,7 +369,36 @@ int evaluate(const Position& pos) {
                 int effectiveKingDist = (pos.side_to_move() == c) ? kingToPromo : kingToPromo - 1;
                 U64 theirHeavy = pos.pieces(them, ROOK) | pos.pieces(them, QUEEN);
                 if (effectiveKingDist > ranksToPromo && !theirHeavy)
-                    eg += sign * 300;
+                    eg += sign * 350;
+            }
+
+            // Connected passed pawns — dwa passed obok siebie = ogromna grozba
+            U64 adjFiles = (f > 0 ? FileA_BB << (f-1) : 0) | (f < 7 ? FileA_BB << (f+1) : 0);
+            if (passedBB[c] & adjFiles) {
+                static const int connectedBonus[] = {0, 0, 5, 15, 30, 60, 120, 0};
+                eg += sign * connectedBonus[r];
+            }
+        }
+    }
+
+    // === Rook cutting off king ===
+    // Wieza na linii odcinajaca wrogiego krola od passed pawn = ogromna przewaga
+    for (Color c : {WHITE, BLACK}) {
+        int sign = (c == WHITE) ? 1 : -1;
+        Color them = ~c;
+        if (!passedBB[c]) continue;
+        U64 rooks = pos.pieces(c, ROOK);
+        Square theirKsq = (them == WHITE) ? kingWh : kingBl;
+        int tkr = rank_of(theirKsq);
+        while (rooks) {
+            Square rs = pop_lsb(rooks);
+            int rr = rank_of(rs);
+            // Wieza na rzedzie miedzy passed pawn a wrogim krolem
+            // = krol odciety, nie moze pomoc w obronie
+            if (c == WHITE && rr > tkr && rr < 7) {
+                eg += sign * 20;
+            } else if (c == BLACK && rr < tkr && rr > 0) {
+                eg += sign * 20;
             }
         }
     }
@@ -824,18 +863,20 @@ int evaluate(const Position& pos) {
     }
 
     // === King centralization w endgame ===
-    // Agresywniejszy bonus niz PST — krol w centrum wygrywa koncowki.
-    // Tylko gdy malo figur (faza < polowy).
-    if (phase < TotalPhase / 2) {
+    // Krol w centrum wygrywa koncowki — agresywny bonus.
+    // Skalowany przez faze: pelny efekt w czystym EG, malejacy w MG.
+    {
+        // Ile jestesmy w endgame: 0 = full MG, TotalPhase = impossibru
+        int egWeight = TotalPhase - phase; // 0..TotalPhase
         for (Color c : {WHITE, BLACK}) {
             int sign = (c == WHITE) ? 1 : -1;
             Square ksq = (c == WHITE) ? kingWh : kingBl;
-            // Dystans Chebyshev od centrum (d4/d5/e4/e5)
             int kf = file_of(ksq);
             int kr = rank_of(ksq);
             int distFromCenter = std::max(std::abs(kf - 3), std::abs(kr - 3)); // 0=centrum, 3=rog
-            // Bonus: 0 w centrum, -15 na brzegu, -30 w rogu
-            eg += sign * (3 - distFromCenter) * 5;
+            // Max bonus: 30cp w centrum, 0 na brzegu, -15 w rogu
+            int bonus = (3 - distFromCenter) * 10;
+            eg += sign * bonus * egWeight / TotalPhase;
         }
     }
 
