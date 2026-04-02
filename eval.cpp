@@ -660,56 +660,44 @@ int evaluate(const Position& pos) {
     }
 
     // === Threat Detection ===
-    // Kara za figury atakowane przez tansze figury przeciwnika.
-    // Np. pionek atakuje skoczka, skoczek atakuje wieze — to grozba.
     for (Color c : {WHITE, BLACK}) {
         int sign = (c == WHITE) ? 1 : -1;
         Color them = ~c;
 
-        // 1. Nasze figury atakowane przez wrogi pionek (bardzo grozne)
-        U64 threatenedByPawn = pos.pieces(c, KNIGHT, BISHOP) & pawnAtt[them];
-        mg -= sign * popcount(threatenedByPawn) * 25;
-        eg -= sign * popcount(threatenedByPawn) * 15;
+        // Cache bitboardy — unikamy wielokrotnych wywolan pos.pieces()
+        U64 ourMinors = pos.pieces(c, KNIGHT) | pos.pieces(c, BISHOP);
+        U64 ourMajors = pos.pieces(c, ROOK) | pos.pieces(c, QUEEN);
+        U64 ourAll    = pos.pieces(c);
 
-        U64 majorByPawn = (pos.pieces(c, ROOK) | pos.pieces(c, QUEEN)) & pawnAtt[them];
-        mg -= sign * popcount(majorByPawn) * 35;
-        eg -= sign * popcount(majorByPawn) * 20;
+        // 1. Nasze figury atakowane przez wrogi pionek
+        mg -= sign * popcount(ourMinors & pawnAtt[them]) * 25;
+        eg -= sign * popcount(ourMinors & pawnAtt[them]) * 15;
+        mg -= sign * popcount(ourMajors & pawnAtt[them]) * 35;
+        eg -= sign * popcount(ourMajors & pawnAtt[them]) * 20;
 
         // 2. Nasze wieze/hetman atakowane przez wrogi skoczek/goniec
-        U64 majorByMinor = (pos.pieces(c, ROOK) | pos.pieces(c, QUEEN)) & minorAtt[them];
-        mg -= sign * popcount(majorByMinor) * 20;
-        eg -= sign * popcount(majorByMinor) * 10;
+        mg -= sign * popcount(ourMajors & minorAtt[them]) * 20;
+        eg -= sign * popcount(ourMajors & minorAtt[them]) * 10;
 
         // 3. Nasz hetman atakowany przez wroga wieze
-        U64 queenByRook = pos.pieces(c, QUEEN) & rookAtt[them];
-        mg -= sign * popcount(queenByRook) * 20;
-        eg -= sign * popcount(queenByRook) * 10;
+        mg -= sign * popcount(pos.pieces(c, QUEEN) & rookAtt[them]) * 20;
+        eg -= sign * popcount(pos.pieces(c, QUEEN) & rookAtt[them]) * 10;
 
         // 4. Hanging pieces: nasze figury atakowane i nie bronione
-        U64 attacked = pos.pieces(c) & allAttacks[them];
-        U64 defended = pos.pieces(c) & allAttacks[c];
-        U64 hanging = attacked & ~defended & ~pos.pieces(c, PAWN);
+        U64 hanging = (ourAll & allAttacks[them]) & ~(ourAll & allAttacks[c]) & ~pos.pieces(c, PAWN);
         mg -= sign * popcount(hanging) * 15;
         eg -= sign * popcount(hanging) * 20;
 
-        // 5. Figury atakowane przez wrogiego krola — uzyj SEE
-        // Krol bierze figure, ale "obrona" moze byc iluzoryczna (nie bijemy krola)
-        // SEE poprawnie to rozwiazuje.
+        // 5. Figury atakowane przez wrogiego krola i nie bronione pionkiem
+        // Szybkie sprawdzenie bez SEE (SEE za wolne w eval)
         Square theirKsq2 = (them == WHITE) ? kingWh : kingBl;
         U64 kingAtt = KingAttacks[theirKsq2];
-        U64 ourPiecesNoPawn = pos.pieces(c) & ~pos.pieces(c, PAWN) & ~pos.pieces(c, KING);
-        U64 threatenedByKing = ourPiecesNoPawn & kingAtt;
-        while (threatenedByKing) {
-            Square s = pop_lsb(threatenedByKing);
-            // Stwórz ruch króla biorącego tę figurę
-            Move captureMove = make_move(theirKsq2, s, NORMAL);
-            int seeVal = pos.see(captureMove);
-            if (seeVal > 0) {
-                // SEE potwierdza: krol moze brac z zyskiem
-                mg -= sign * std::min(seeVal, 300) * 15 / 100;
-                eg -= sign * std::min(seeVal, 500) * 25 / 100;
-            }
-        }
+        U64 ourMinorMajor = pos.pieces(c, KNIGHT) | pos.pieces(c, BISHOP)
+                          | pos.pieces(c, ROOK) | pos.pieces(c, QUEEN);
+        U64 threatenedByKing = ourMinorMajor & kingAtt & ~pawnAtt[c];
+        int threatCount = popcount(threatenedByKing);
+        mg -= sign * threatCount * 35;
+        eg -= sign * threatCount * 55;
     }
 
     // === Knight outposts ===
@@ -1011,8 +999,8 @@ int evaluate(const Position& pos) {
         Color stronger = (score > 0) ? WHITE : BLACK;
         Color weaker   = ~stronger;
         int strongPawns = popcount(pos.pieces(stronger, PAWN));
-        int strongMinors = popcount(pos.pieces(stronger, KNIGHT)) + popcount(pos.pieces(stronger, BISHOP));
-        int strongMajors = popcount(pos.pieces(stronger, ROOK)) + popcount(pos.pieces(stronger, QUEEN));
+        int strongMinors = popcount(pos.pieces(stronger, KNIGHT) | pos.pieces(stronger, BISHOP));
+        int strongMajors = popcount(pos.pieces(stronger, ROOK) | pos.pieces(stronger, QUEEN));
 
         // Brak pionkow — trudno wygrać
         if (strongPawns == 0) {
@@ -1028,12 +1016,12 @@ int evaluate(const Position& pos) {
         }
 
         // Opposite color bishops (bez wierz/hetmanow) — remisowosc
-        if (strongMajors == 0 && popcount(pos.pieces(stronger, BISHOP)) == 1
-            && popcount(pos.pieces(weaker, BISHOP)) == 1) {
+        U64 sBishops = pos.pieces(stronger, BISHOP);
+        U64 wBishops = pos.pieces(weaker, BISHOP);
+        if (strongMajors == 0 && sBishops && !(sBishops & (sBishops - 1))  // exactly 1
+            && wBishops && !(wBishops & (wBishops - 1))) {                  // exactly 1
             constexpr U64 LightSq = 0x55AA55AA55AA55AAULL;
-            Square sb = lsb(pos.pieces(stronger, BISHOP));
-            Square wb = lsb(pos.pieces(weaker, BISHOP));
-            bool oppColor = ((LightSq & square_bb(sb)) != 0) != ((LightSq & square_bb(wb)) != 0);
+            bool oppColor = ((LightSq & sBishops) != 0) != ((LightSq & wBishops) != 0);
             if (oppColor)
                 scaleFactor = std::min(scaleFactor, strongPawns <= 1 ? 16 : 32);
         }
