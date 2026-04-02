@@ -167,20 +167,47 @@ def extract_positions(pgn_paths, max_positions=50000, skip_plies=16):
 
 def evaluate_positions(engine_path, positions, params_dict, depth=1):
     """Ewaluuje pozycje silnikiem. Zwraca [eval_cp, ...]"""
-    engine = chess.engine.SimpleEngine.popen_uci(engine_path)
-    engine.configure({"OwnBook": False, "Hash": 16, **params_dict})
+    try:
+        engine = chess.engine.SimpleEngine.popen_uci(engine_path)
+        engine.configure({"OwnBook": False, "Hash": 16, **params_dict})
+    except Exception as e:
+        print(f"  [ERROR] Nie mozna uruchomic silnika: {e}")
+        return None
 
     evals = []
+    errors = 0
+    start_time = time.time()
     for i, (fen, _) in enumerate(positions):
-        board = chess.Board(fen)
-        info = engine.analyse(board, chess.engine.Limit(depth=depth))
-        score = info["score"].white()
-        cp = score.score(mate_score=10000) if not score.is_mate() else (10000 if score.mate() > 0 else -10000)
-        evals.append(cp)
-        if (i + 1) % 5000 == 0:
-            print(f"    Eval: {i+1}/{len(positions)}")
+        try:
+            board = chess.Board(fen)
+            info = engine.analyse(board, chess.engine.Limit(depth=depth, time=2.0))
+            score = info["score"].white()
+            cp = score.score(mate_score=10000) if not score.is_mate() else (10000 if score.mate() > 0 else -10000)
+            evals.append(cp)
+        except Exception as e:
+            errors += 1
+            evals.append(0)  # fallback
+            if errors <= 3:
+                print(f"  [WARN] Pozycja {i+1} error: {e}")
+            if errors > 10:
+                print(f"  [ERROR] Za duzo bledow ({errors}), przerywam")
+                try: engine.quit()
+                except: pass
+                return None
 
-    engine.quit()
+        if (i + 1) % 5000 == 0:
+            elapsed = time.time() - start_time
+            rate = (i + 1) / elapsed
+            eta = (len(positions) - i - 1) / rate
+            print(f"    Eval: {i+1}/{len(positions)}  ({rate:.0f} poz/s, ETA {eta:.0f}s, errors={errors})")
+
+    try:
+        engine.quit()
+    except:
+        pass
+
+    if errors > 0:
+        print(f"  Zakonczono z {errors} bledami")
     return evals
 
 
@@ -215,6 +242,9 @@ def texel_tune(engine_path, positions, iterations=5, depth=1):
     # Baseline
     print("Baseline eval...")
     base_evals = evaluate_positions(engine_path, positions, current, depth)
+    if base_evals is None:
+        print("[FATAL] Nie udalo sie obliczyc baseline eval. Sprawdz silnik.")
+        return current
     K = find_K(base_evals, results)
     base_error = mse(base_evals, results, K)
     print(f"Baseline MSE: {base_error:.6f}\n")
@@ -240,6 +270,10 @@ def texel_tune(engine_path, positions, iterations=5, depth=1):
 
                 current[name] = new_val
                 new_evals = evaluate_positions(engine_path, positions, current, depth)
+                if new_evals is None:
+                    print(f"  [ERROR] Silnik padl przy {name}={new_val}, cofam")
+                    current[name] = old_val
+                    continue
                 new_err = mse(new_evals, results, K)
 
                 if new_err < best_err:
@@ -254,6 +288,8 @@ def texel_tune(engine_path, positions, iterations=5, depth=1):
                             break
                         current[name] = next_val
                         next_evals = evaluate_positions(engine_path, positions, current, depth)
+                        if next_evals is None:
+                            break
                         next_err = mse(next_evals, results, K)
                         if next_err < best_err:
                             best_err = next_err
