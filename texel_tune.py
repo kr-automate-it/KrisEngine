@@ -61,41 +61,44 @@ def read_uci_options(engine_path):
     return options
 
 
-# Parametry eval do tuningu + krok (min/max/default brane z silnika UCI)
-EVAL_PARAMS = {
-    "knightMobMG":    1,
-    "knightMobEG":    1,
-    "bishopMobMG":    1,
-    "bishopMobEG":    1,
-    "rookMobMG":      1,
-    "rookMobEG":      1,
-    "queenMobMG":     1,
-    "queenMobEG":     1,
-    "passedPawnScale": 5,
-    "bishopPairMG":   5,
-    "bishopPairEG":   5,
-    "isolatedPawnMG": 2,
-    "isolatedPawnEG": 2,
-    "doubledPawnMG":  2,
-    "doubledPawnEG":  2,
-    "knightOutpostMG": 5,
-    "knightOutpostEG": 5,
-    "rookOpenFileMG":  3,
-    "rookOpenFileEG":  3,
-    "rook7thRankMG":   5,
-    "rook7thRankEG":   5,
-    "backwardPawnMG":  2,
-    "backwardPawnEG":  2,
-    "connectedPawnMG": 1,
-    "connectedPawnEG": 2,
-    "badBishopMG":     1,
-    "badBishopEG":     1,
-    "kingCentralEG":   2,
-    "hangingPieceMG":  3,
-    "hangingPieceEG":  3,
-    "tempoMG":        2,
-    "tempoEG":        2,
-}
+# Parametry eval do tuningu, pogrupowane tematycznie.
+# Kazda grupa tunowana oddzielnie w jednej iteracji — redukuje overfitting.
+EVAL_PARAM_GROUPS = [
+    # Grupa 1: Mobilnosc
+    {
+        "knightMobMG": 1, "knightMobEG": 1,
+        "bishopMobMG": 1, "bishopMobEG": 1,
+        "rookMobMG": 1, "rookMobEG": 1,
+        "queenMobMG": 1, "queenMobEG": 1,
+    },
+    # Grupa 2: Struktura pionkow
+    {
+        "passedPawnScale": 5,
+        "isolatedPawnMG": 2, "isolatedPawnEG": 2,
+        "doubledPawnMG": 2, "doubledPawnEG": 2,
+        "backwardPawnMG": 2, "backwardPawnEG": 2,
+        "connectedPawnMG": 1, "connectedPawnEG": 2,
+    },
+    # Grupa 3: Figury
+    {
+        "bishopPairMG": 5, "bishopPairEG": 5,
+        "knightOutpostMG": 5, "knightOutpostEG": 5,
+        "badBishopMG": 1, "badBishopEG": 1,
+        "rookOpenFileMG": 3, "rookOpenFileEG": 3,
+        "rook7thRankMG": 5, "rook7thRankEG": 5,
+    },
+    # Grupa 4: Taktyka i koncowki
+    {
+        "hangingPieceMG": 3, "hangingPieceEG": 3,
+        "kingCentralEG": 2,
+        "tempoMG": 2, "tempoEG": 2,
+    },
+]
+
+# Flat dict dla kompatybilnosci
+EVAL_PARAMS = {}
+for g in EVAL_PARAM_GROUPS:
+    EVAL_PARAMS.update(g)
 
 
 def build_params(engine_path):
@@ -229,9 +232,15 @@ def find_K(evals, results):
     return best_K
 
 
-def texel_tune(engine_path, positions, iterations=5, depth=1):
+def texel_tune(engine_path, positions, iterations=5, depth=1, group=-1):
     """Local Search Texel Tuning."""
     PARAMS = build_params(engine_path)
+    # Filtruj do wybranej grupy
+    if group >= 0 and group < len(EVAL_PARAM_GROUPS):
+        active_names = set(EVAL_PARAM_GROUPS[group].keys())
+        PARAMS = [p for p in PARAMS if p[0] in active_names]
+        gnames = ["Mobilnosc", "Pionki", "Figury", "Taktyka/Koncowki"]
+        print(f"Tryb grupowy: [{gnames[group]}] — {len(PARAMS)} parametrow")
     current = {p[0]: p[1] for p in PARAMS}
     results = [r for _, r in positions]
 
@@ -250,13 +259,27 @@ def texel_tune(engine_path, positions, iterations=5, depth=1):
     print(f"Baseline MSE: {base_error:.6f}\n")
 
     import random as _rnd
+    group_names = ["Mobilnosc", "Pionki", "Figury", "Taktyka/Koncowki"]
+
     for it in range(iterations):
         improved = False
         print(f"--- Iteracja {it+1}/{iterations} (MSE = {base_error:.6f}) ---")
 
-        # Losowa kolejnosc parametrow — eliminuje bias
-        param_order = list(PARAMS)
-        _rnd.shuffle(param_order)
+        # Tunuj kazda grupe oddzielnie
+        for gi, group in enumerate(EVAL_PARAM_GROUPS):
+            group_params = [(n, d, lo, hi, s) for n, d, lo, hi, s in PARAMS if n in group]
+            if not group_params:
+                continue
+            _rnd.shuffle(group_params)
+            gname = group_names[gi] if gi < len(group_names) else f"Grupa {gi+1}"
+            print(f"  [{gname}] ({len(group_params)} params)")
+
+        # Potem iteruj po wszystkich (juz poshufflowanych grupami)
+        param_order = []
+        for group in EVAL_PARAM_GROUPS:
+            gp = [(n, d, lo, hi, s) for n, d, lo, hi, s in PARAMS if n in group]
+            _rnd.shuffle(gp)
+            param_order.extend(gp)
 
         for name, default, lo, hi, step in param_order:
             old_val = current[name]
@@ -339,6 +362,8 @@ def main():
     parser.add_argument("--depth", type=int, default=1)
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--skip-plies", type=int, default=16)
+    parser.add_argument("--group", type=int, default=-1,
+                        help="Tunuj tylko grupe: 0=mobilnosc, 1=pionki, 2=figury, 3=taktyka. -1=wszystkie")
     args = parser.parse_args()
 
     # Znajdz PGN
@@ -363,7 +388,7 @@ def main():
         print(f"Za malo pozycji ({len(positions)}). Potrzeba min 1000+.")
         sys.exit(1)
 
-    texel_tune(args.engine, positions, args.iterations, args.depth)
+    texel_tune(args.engine, positions, args.iterations, args.depth, args.group)
 
 
 if __name__ == "__main__":
